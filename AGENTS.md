@@ -55,4 +55,4 @@ Después, recorrer los criterios de aceptación CA1–CA14 de `ESPECIFICACION.md
 
 ## Al terminar una tarea
 
-Resume en 3–5 líneas qué cambiaste y por qué, para copiarlo en `PROCESO_IA.md`.
+Resume en 3–5 líneas qué cambiaste y por qué, para copiarlo en la sección «Cómo la he construido» del README.

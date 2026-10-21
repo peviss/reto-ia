@@ -142,3 +142,15 @@ Añade a ejemplos/generar_ejemplos.py un ticket inventado de <tipo de comercio> 
 movimiento en el extracto si debe cuadrar. Solo datos ficticios: NIF B0000000X,
 tarjeta ****4444, nombres inventados.
 ```
+
+## 7. Dependencias
+
+Las mismas que `requirements.txt`. Si se añade, quita o cambia un paquete, se actualiza esta tabla.
+
+| Paquete | Para qué se usa |
+|---|---|
+| `streamlit>=1.38` | Interfaz web y despliegue en Streamlit Community Cloud |
+| `google-genai>=1.0` | Llamadas a la API de Gemini (lectura de extractos y comprobantes) |
+| `pandas` | Tablas de gastos y agrupación por categoría; pasar el extracto Excel a texto antes de enviarlo a la IA |
+| `openpyxl` | Leer el extracto Excel y escribir el Excel descargable |
+| `pillow` | Reducir las fotos a 1600 px antes de enviarlas a la IA |

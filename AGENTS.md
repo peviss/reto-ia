@@ -42,6 +42,10 @@ texto visible: en español, trato de "usted", sin jerga informática ni contable
 6. Maneja como mínimo: falta de clave, clave inválida, 429 (con un reintento), 400, 5xx y fallo de red.
 7. Si cambias un prompt o un esquema, actualiza ESPECIFICACION §4 y §6.
 8. Código simple y comentado en español: se evalúa que el autor lo sepa explicar.
+9. Si cambian los requisitos (funcionalidades, reglas de emparejamiento, interfaz, casos límite),
+   actualiza la sección correspondiente de `ESPECIFICACION.md` en la misma tarea.
+10. Si añades, quitas o cambias un paquete en `requirements.txt` (tras preguntar), actualiza
+    ESPECIFICACION §7 (*Dependencias*) y la línea *Stack* de este archivo.
 
 ## Cómo probar
 
@@ -56,3 +60,6 @@ Después, recorrer los criterios de aceptación CA1–CA14 de `ESPECIFICACION.md
 ## Al terminar una tarea
 
 Resume en 3–5 líneas qué cambiaste y por qué, para copiarlo en la sección «Cómo la he construido» del README.
+
+Si la tarea añade, completa o quita una funcionalidad, actualiza su fila en `FEATURES.md` y el
+conteo de la cabecera (en Claude Code lo hace la skill `/features`).

@@ -51,7 +51,7 @@ La especificación completa está en [ESPECIFICACION.md](ESPECIFICACION.md). Res
 | Pieza | Detalle |
 |---|---|
 | Interfaz | Streamlit (una página) |
-| Lectura (IA) | API de Gemini `gemini-2.5-flash`, multimodal, salida JSON con esquema; 5 comprobantes por llamada |
+| Lectura (IA) | API de Gemini `gemini-3.8-flash`, multimodal, salida JSON con esquema; 5 comprobantes por llamada |
 | Cuadre (Python) | `cuadre.py`: (1) uno a uno: mismo importe (±1 céntimo) y fecha a ≤ 4 días; (2) reembolsos: varios tickets anteriores que suman exactamente un pago (p. ej. una transferencia a quien adelantó las compras) |
 | Errores | Mensajes claros para cuota agotada (con reintento), clave, archivos dañados, demasiado grandes o ilegibles |
 | Clave | En *Settings → Secrets* de Streamlit, nunca en el código |
@@ -75,7 +75,7 @@ Para regenerar los datos de ejemplo: `python ejemplos/generar_ejemplos.py`.
 
 ## Cómo la he construido
 
-- **Herramientas:** Claude Code (extensión de VS Code) para programar; la app usa la API de Gemini (`gemini-2.5-flash`).
+- **Herramientas:** Claude Code (extensión de VS Code) para programar; la app usa la API de Gemini (`gemini-3.8-flash`).
 - **Fichero de contexto del agente:** [AGENTS.md](AGENTS.md), con las reglas del proyecto. [CLAUDE.md](CLAUDE.md) (Claude Code) y [GEMINI.md](GEMINI.md) (Gemini CLI) lo importan, así que todos los agentes siguen las mismas reglas.
 - **Prompts clave:**
   1. «Crea el scaffold del proyecto a partir de `Enunciado del reto.pdf` y `Rúbrica del reto.pdf`. Crea los archivos mencionados con sus apartados vacíos. No implementes funcionalidades todavía, no escribas ninguna clave y usa solo datos inventados.»

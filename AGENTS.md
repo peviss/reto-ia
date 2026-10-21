@@ -23,7 +23,7 @@ texto visible: en español, trato de "usted", sin jerga informática ni contable
 ## Stack
 
 - Python 3.11+, Streamlit, pandas, Pillow, openpyxl.
-- SDK `google-genai` (`from google import genai`), modelo `gemini-2.5-flash`, `temperature=0`,
+- SDK `google-genai` (`from google import genai`), modelo `gemini-3.8-flash`, `temperature=0`,
   `response_mime_type="application/json"` + `response_schema`.
 - Despliegue: Streamlit Community Cloud desde un repositorio público de GitHub.
 - Dependencias: solo las de `requirements.txt`. No añadas otras sin preguntar.

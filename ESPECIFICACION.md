@@ -77,7 +77,7 @@ Estados: 📝 Planeada · 🚧 En curso · ✅ Implementada (el código existe y
 
 ## 4. Pieza de IA
 
-- **Qué usa:** API de Gemini, `gemini-2.5-flash`, `temperature=0`, **salida JSON con esquema**
+- **Qué usa:** API de Gemini, `gemini-3.8-flash`, `temperature=0`, **salida JSON con esquema**
   (Pydantic `Movimiento` y `Comprobante`), con lectura multimodal de imágenes y PDF.
 - **Por qué:** hace falta leer fotos y PDF de formatos muy distintos. Un OCR clásico saca el texto,
   pero no sabe cuál es el total ni la fecha. Gemini es multimodal, devuelve datos estructurados y

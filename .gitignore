@@ -1,0 +1,12 @@
+# Secretos: nunca al repositorio
+.streamlit/secrets.toml
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Sistema
+.DS_Store

@@ -51,11 +51,13 @@ texto visible: en español, trato de "usted", sin jerga informática ni contable
 
 ```bash
 pip install -r requirements.txt
+python -m unittest discover -s tests -v   # pruebas automáticas, sin gastar cuota de la IA
 cp .streamlit/secrets.toml.example .streamlit/secrets.toml   # pegar clave
 streamlit run app.py          # → "Probar con datos de ejemplo" → "Cuadrar gastos"
 ```
 
-Después, recorrer los criterios de aceptación CA1–CA14 de `ESPECIFICACION.md`.
+Después, recorrer los criterios de aceptación CA1–CA17 de `ESPECIFICACION.md` que no cubren las
+pruebas automáticas. En Claude Code lo guía la skill `/test`.
 
 ## Al terminar una tarea
 

@@ -56,9 +56,9 @@ Compras online · Otros. Si la IA devuelve otra, se convierte en "Otros".
 
 | # | Funcionalidad | Estado | Dónde está | Criterios | Notas |
 |---|---|---|---|---|---|
-| F1 | Emparejar comprobantes con el extracto | ✅ Implementada | `cuadre.py`: `emparejar`, `agrupar_reembolsos`, `cuadrar` | CA1–CA3, CA7, CA13, CA15–CA17 | Sin verificar con los datos de ejemplo |
-| F2 | Detectar lo que falta | ✅ Implementada | `app.py`: pestaña «⚠️ Qué falta» | CA4, CA5, CA10 | Sin verificar |
-| F3 | Agrupar por categoría + Excel | ✅ Implementada | `cuadre.py` (agrupación), `app.py`: `a_excel`, pestaña «📊 Por categoría» | CA1, CA7 | Sin verificar |
+| F1 | Emparejar comprobantes con el extracto | ✅ Implementada | `cuadre.py`: `emparejar`, `agrupar_reembolsos`, `cuadrar` | CA1–CA3, CA7, CA13, CA15–CA17 | Reglas probadas en `tests/test_cuadre.py`; falta la prueba manual con la IA real |
+| F2 | Detectar lo que falta | ✅ Implementada | `app.py`: pestaña «⚠️ Qué falta» | CA4, CA5, CA10 | Reglas probadas en `tests/`; falta la prueba manual con la IA real |
+| F3 | Agrupar por categoría + Excel | ✅ Implementada | `cuadre.py` (agrupación), `app.py`: `a_excel`, pestaña «📊 Por categoría» | CA1, CA7 | Reglas probadas en `tests/`; falta la prueba manual con la IA real |
 | F4 | Enviar los gastos a un programa de contabilidad externo | 📝 Planeada | — | — | Anunciada en HITO_SEMANA2.md; sin especificar |
 | F5 | Responder preguntas sobre los gastos con un RAG | 📝 Planeada | — | — | Anunciada en HITO_SEMANA2.md; sin especificar |
 
@@ -100,6 +100,11 @@ Estados: 📝 Planeada · 🚧 En curso · ✅ Implementada (el código existe y
 ## 5. Casos límite y criterios de aceptación
 
 Datos de prueba: `ejemplos/` (inventados, regenerables con `python ejemplos/generar_ejemplos.py`).
+
+**Pruebas automáticas** (`python -m unittest discover -s tests -v`, sin llamar a la IA): cubren
+CA1–CA13 y CA15–CA17 con lo que la IA *debería* leer de los ejemplos (`tests/datos_ejemplo.py`) y
+un cliente de IA falso para los errores. Quedan para la prueba manual con la app: que la IA lea
+bien los ejemplos y CA14. Cada prueba lleva en su nombre el ID del criterio (`test_CA7_…`).
 
 | ID | Caso | Entrada | Resultado esperado |
 |---|---|---|---|

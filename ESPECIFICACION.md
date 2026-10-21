@@ -50,6 +50,21 @@ defecto 4) y de ventana de reembolsos (0–90, por defecto 30; 0 = no buscar), p
 agua, gas) · Telecomunicaciones y software · Material y oficina · Salud · Impuestos y cuotas ·
 Compras online · Otros. Si la IA devuelve otra, se convierte en "Otros".
 
+### 2.1 Estado de las funcionalidades
+
+**Implementadas: 3 / 5** · Verificadas: 0 / 5 · Última actualización: 2026-10-21
+
+| # | Funcionalidad | Estado | Dónde está | Criterios | Notas |
+|---|---|---|---|---|---|
+| F1 | Emparejar comprobantes con el extracto | ✅ Implementada | `cuadre.py`: `emparejar`, `agrupar_reembolsos`, `cuadrar` | CA1–CA3, CA7, CA13, CA15–CA17 | Sin verificar con los datos de ejemplo |
+| F2 | Detectar lo que falta | ✅ Implementada | `app.py`: pestaña «⚠️ Qué falta» | CA4, CA5, CA10 | Sin verificar |
+| F3 | Agrupar por categoría + Excel | ✅ Implementada | `cuadre.py` (agrupación), `app.py`: `a_excel`, pestaña «📊 Por categoría» | CA1, CA7 | Sin verificar |
+| F4 | Enviar los gastos a un programa de contabilidad externo | 📝 Planeada | — | — | Anunciada en HITO_SEMANA2.md; sin especificar |
+| F5 | Responder preguntas sobre los gastos con un RAG | 📝 Planeada | — | — | Anunciada en HITO_SEMANA2.md; sin especificar |
+
+Estados: 📝 Planeada · 🚧 En curso · ✅ Implementada (el código existe y se puede usar) ·
+🧪 Verificada (sus criterios de aceptación pasan con los datos de ejemplo) · ❌ Descartada (no cuenta en el total).
+
 ## 3. Interfaz (Streamlit, una página)
 
 1. Título y una frase que explica qué hace.

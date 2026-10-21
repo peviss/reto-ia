@@ -163,6 +163,16 @@ movimiento en el extracto si debe cuadrar. Solo datos ficticios: NIF B0000000X,
 tarjeta ****4444, nombres inventados.
 ```
 
+### 6.5 Skills de Claude Code (`.claude/skills/`)
+
+Instrucciones guardadas que el agente sigue cuando la tarea encaja, para no repetir estos prompts:
+
+| Skill | Para qué |
+|---|---|
+| `/features` | Llevar el estado y el conteo de las funcionalidades en §2.1 |
+| `/test` | Pasar las pruebas automáticas, guiar las manuales de §5 y anotar los resultados en PRUEBA.md |
+| `/commit` | Antes de cada commit: comprobar secretos, datos reales, pruebas y documentación; mensaje en español |
+
 ## 7. Dependencias
 
 Las mismas que `requirements.txt`. Si se añade, quita o cambia un paquete, se actualiza esta tabla.

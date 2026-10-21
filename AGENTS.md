@@ -61,5 +61,5 @@ Después, recorrer los criterios de aceptación CA1–CA14 de `ESPECIFICACION.md
 
 Resume en 3–5 líneas qué cambiaste y por qué, para copiarlo en la sección «Cómo la he construido» del README.
 
-Si la tarea añade, completa o quita una funcionalidad, actualiza su fila en `FEATURES.md` y el
-conteo de la cabecera (en Claude Code lo hace la skill `/features`).
+Si la tarea añade, completa o quita una funcionalidad, actualiza su fila y el conteo en
+ESPECIFICACION §2.1 (*Estado de las funcionalidades*); en Claude Code lo hace la skill `/features`.

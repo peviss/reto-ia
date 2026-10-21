@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from cuadre import CATEGORIAS, cuadrar
 
-MODELO = "gemini-2.5-flash"
+MODELO = "gemini-3.8-flash"
 MAX_COMPROBANTES = 20
 COMPROBANTES_POR_LLAMADA = 5
 MAX_MB_ARCHIVO = 8

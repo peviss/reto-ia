@@ -111,6 +111,7 @@ Datos de prueba: `ejemplos/` (inventados, regenerables con `python ejemplos/gene
 CA1–CA13 y CA15–CA18 con lo que la IA *debería* leer de los ejemplos (`tests/datos_ejemplo.py`) y
 modelos de IA falsos para los errores y el paso a Claude. Quedan para la prueba manual con la app: que la IA lea
 bien los ejemplos y CA14. Cada prueba lleva en su nombre el ID del criterio (`test_CA7_…`).
+GitHub las pasa solas en cada push y pull request (`.github/workflows/pruebas.yml`), sin claves.
 
 | ID | Caso | Entrada | Resultado esperado |
 |---|---|---|---|

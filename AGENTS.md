@@ -51,7 +51,7 @@ texto visible: en español, trato de "usted", sin jerga informática ni contable
 
 ```bash
 pip install -r requirements.txt
-python -m unittest discover -s tests -v   # pruebas automáticas, sin gastar cuota de la IA
+python -m unittest discover -s tests -v   # pruebas automáticas, sin gastar cuota de la IA (GitHub Actions las pasa en cada push)
 cp .streamlit/secrets.toml.example .streamlit/secrets.toml   # pegar claves
 streamlit run app.py          # → "Probar con datos de ejemplo" → "Cuadrar gastos"
 ```

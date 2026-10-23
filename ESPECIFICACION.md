@@ -77,8 +77,10 @@ Estados: 📝 Planeada · 🚧 En curso · ✅ Implementada (el código existe y
 
 ## 4. Pieza de IA
 
-- **Qué usa:** API de Gemini, `gemini-3.8-flash`, `temperature=0`, **salida JSON con esquema**
-  (Pydantic `Movimiento` y `Comprobante`), con lectura multimodal de imágenes y PDF.
+- **Qué usa:** Pydantic AI con un `FallbackModel`: primero Gemini (`gemini-3.8-flash`) y, si falla
+  (cuota, caída, clave), Claude de Anthropic (`claude-haiku-5-5`). `temperature=0`, **salida con
+  esquema** (Pydantic `Movimiento` y `Comprobante`), con lectura multimodal de imágenes y PDF.
+  Basta con una de las dos claves (`GEMINI_API_KEY`, `ANTHROPIC_API_KEY`); con las dos, Claude es la reserva.
 - **Por qué:** hace falta leer fotos y PDF de formatos muy distintos. Un OCR clásico saca el texto,
   pero no sabe cuál es el total ni la fecha. Gemini es multimodal, devuelve datos estructurados y
   tiene capa gratuita sin GPU. Un RAG no aplica: no hay que buscar en una base documental.
@@ -89,9 +91,10 @@ Estados: 📝 Planeada · 🚧 En curso · ✅ Implementada (el código existe y
 
 | Situación | Comportamiento |
 |---|---|
-| Falta la clave | "La app no está bien configurada (falta la clave)…" |
+| Falta la clave | "La app no está bien configurada (falta la clave)…" (solo si no hay ninguna de las dos) |
+| Gemini falla y hay clave de Anthropic | Se repite la misma llamada con Claude, sin avisar al usuario |
 | Clave no válida (400/401/403) | "La app no está bien configurada (clave no válida)…" |
-| Cuota agotada (429) | Espera 30 s y reintenta una vez; si sigue: "Se ha agotado la cuota gratuita… espere un minuto (o vuelva mañana si persiste)" |
+| Cuota agotada (429) en el último modelo | Espera 30 s y reintenta una vez; si sigue: "Se ha agotado la cuota gratuita… espere un minuto (o vuelva mañana si persiste)" |
 | Archivo dañado (400) | "La IA no ha podido abrir alguno de los archivos…" |
 | Error del servidor (5xx) / sin red | Mensaje de probar en unos minutos |
 | La IA se salta un archivo | Aparece como "No se ha podido leer" en *Qué falta* |
@@ -135,7 +138,7 @@ bien los ejemplos y CA14. Cada prueba lleva en su nombre el ID del criterio (`te
 - `PROMPT_COMPROBANTES`: un elemento por archivo con su nombre exacto; el TOTAL con IVA (no
   subtotal ni efectivo entregado); `legible=false` si hay dudas, en lugar de inventar.
 
-La forma de la respuesta la fija el esquema JSON (`response_schema`), no el texto del prompt.
+La forma de la respuesta la fija el esquema (`output_type` de Pydantic AI), no el texto del prompt. Los mismos prompts sirven para Gemini y para Claude.
 
 ### 6.2 Prompt para construir o modificar la app con un agente
 
@@ -180,7 +183,7 @@ Las mismas que `requirements.txt`. Si se añade, quita o cambia un paquete, se a
 | Paquete | Para qué se usa |
 |---|---|
 | `streamlit>=1.38` | Interfaz web y despliegue en Streamlit Community Cloud |
-| `google-genai>=1.0` | Llamadas a la API de Gemini (lectura de extractos y comprobantes) |
+| `pydantic-ai-slim[google,anthropic]>=2.60,<3` | Llamadas a la IA (lectura de extractos y comprobantes): Gemini y, de reserva, Claude (Anthropic). Instala `google-genai` y `anthropic` |
 | `pandas` | Tablas de gastos y agrupación por categoría; pasar el extracto Excel a texto antes de enviarlo a la IA |
 | `openpyxl` | Leer el extracto Excel y escribir el Excel descargable |
 | `pillow` | Reducir las fotos a 1600 px antes de enviarlas a la IA |

@@ -51,7 +51,7 @@ La especificación completa está en [ESPECIFICACION.md](ESPECIFICACION.md). Res
 | Pieza | Detalle |
 |---|---|
 | Interfaz | Streamlit (una página) |
-| Lectura (IA) | API de Gemini `gemini-3.8-flash`, multimodal, salida JSON con esquema; 5 comprobantes por llamada |
+| Lectura (IA) | Pydantic AI: Gemini `gemini-3.8-flash` y, si falla, Claude `claude-haiku-5-5` de reserva (`FallbackModel`); multimodal, salida con esquema; 5 comprobantes por llamada |
 | Cuadre (Python) | `cuadre.py`: (1) uno a uno: mismo importe (±1 céntimo) y fecha a ≤ 4 días; (2) reembolsos: varios tickets anteriores que suman exactamente un pago (p. ej. una transferencia a quien adelantó las compras) |
 | Errores | Mensajes claros para cuota agotada (con reintento), clave, archivos dañados, demasiado grandes o ilegibles |
 | Clave | En *Settings → Secrets* de Streamlit, nunca en el código |

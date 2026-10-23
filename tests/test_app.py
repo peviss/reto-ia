@@ -1,6 +1,6 @@
 """Pruebas de app.py: validación de la entrada y manejo de errores de la IA.
 
-Ninguna prueba llama de verdad a Gemini: el cliente se sustituye por uno falso.
+Ninguna prueba llama de verdad a la IA: los modelos se sustituyen por otros falsos (FunctionModel).
 Ejecutar:  python -m unittest discover -s tests -v
 """
 
@@ -9,7 +9,10 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from google.genai import errors
+from pydantic_ai.exceptions import ModelConnectionError, ModelHTTPError, ModelRateLimitError
+from pydantic_ai.messages import ModelResponse, ToolCallPart
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.function import FunctionModel
 from streamlit.runtime.secrets import Secrets
 from streamlit.testing.v1 import AppTest
 
@@ -25,20 +28,29 @@ def archivo(nombre, megas=0.01):
 
 
 def error_api(codigo, texto="error"):
-    return errors.APIError(codigo, {"error": {"code": codigo, "message": texto, "status": ""}})
+    if codigo == 429:
+        return ModelRateLimitError("falso", texto)
+    return ModelHTTPError(codigo, "falso", {"message": texto})
 
 
-class ClienteFalso:
-    """Imita genai.Client: lanza los errores que se le pasen, uno por llamada."""
+class ModeloFalso(FunctionModel):
+    """Imita un modelo de IA: lanza los errores que se le pasen, uno por llamada.
+
+    Si se le acaban los errores, responde con un comprobante leído.
+    """
 
     def __init__(self, *fallos):
         self.fallos = list(fallos)
         self.llamadas = 0
-        self.models = self
+        super().__init__(self.responder)
 
-    def generate_content(self, **_):
+    def responder(self, _mensajes, info):
         self.llamadas += 1
-        raise self.fallos.pop(0)
+        if self.fallos:
+            raise self.fallos.pop(0)
+        comprobante = {"archivo": "t.jpg", "comercio": "Bar Inventado", "fecha": "2025-10-01",
+                       "total": 12.5, "categoria": "Otros", "legible": True}
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {"response": [comprobante]})])
 
 
 class Validacion(unittest.TestCase):
@@ -61,32 +73,67 @@ class Validacion(unittest.TestCase):
 
 class ErroresDeLaIA(unittest.TestCase):
 
-    def llamar(self, cliente):
+    def llamar(self, modelo):
         with mock.patch.object(app.time, "sleep"), mock.patch.object(app.st, "info"):
-            return app.llamar_gemini(cliente, ["hola"], "prompt", app.Comprobante)
+            return app.llamar_ia(modelo, ["hola"], "prompt", app.Comprobante)
 
     def test_CA12_cuota_agotada_reintenta_una_vez(self):
-        cliente = ClienteFalso(error_api(429), error_api(429))
-        datos, error = self.llamar(cliente)
+        modelo = ModeloFalso(error_api(429), error_api(429))
+        datos, error = self.llamar(modelo)
         self.assertIsNone(datos)
-        self.assertEqual(cliente.llamadas, 2)
+        self.assertEqual(modelo.llamadas, 2)
         self.assertIn("cuota gratuita", error)
 
     def test_clave_no_valida(self):
-        _, error = self.llamar(ClienteFalso(error_api(400, "API key not valid")))
+        _, error = self.llamar(ModeloFalso(error_api(400, "API key not valid")))
         self.assertIn("clave no válida", error)
 
     def test_archivo_danado(self):
-        _, error = self.llamar(ClienteFalso(error_api(400)))
+        _, error = self.llamar(ModeloFalso(error_api(400)))
         self.assertIn("no ha podido abrir", error)
 
     def test_servidor_caido(self):
-        _, error = self.llamar(ClienteFalso(error_api(503)))
+        _, error = self.llamar(ModeloFalso(error_api(503)))
         self.assertIn("no responde", error)
 
     def test_sin_red(self):
-        _, error = self.llamar(ClienteFalso(ConnectionError()))
+        _, error = self.llamar(ModeloFalso(ModelConnectionError("falso", "sin red")))
         self.assertIn("No hay conexión", error)
+
+
+class ModeloDeReserva(unittest.TestCase):
+    """Si Gemini falla, la misma llamada se repite con Claude (FallbackModel)."""
+
+    def llamar(self, modelo):
+        with mock.patch.object(app.time, "sleep") as espera, mock.patch.object(app.st, "info"):
+            resultado = app.llamar_ia(modelo, ["hola"], "prompt", app.Comprobante)
+        return resultado, espera
+
+    def test_gemini_sin_cuota_usa_claude_sin_esperar(self):
+        gemini, claude = ModeloFalso(error_api(429)), ModeloFalso()
+        (datos, error), espera = self.llamar(FallbackModel(gemini, claude))
+        self.assertIsNone(error)
+        self.assertEqual(datos[0]["comercio"], "Bar Inventado")
+        self.assertEqual((gemini.llamadas, claude.llamadas), (1, 1))
+        espera.assert_not_called()
+
+    def test_fallan_los_dos_cuenta_el_ultimo(self):
+        gemini, claude = ModeloFalso(error_api(429)), ModeloFalso(error_api(503))
+        (datos, error), _ = self.llamar(FallbackModel(gemini, claude))
+        self.assertIsNone(datos)
+        self.assertIn("no responde", error)
+
+    def test_obtener_modelo_segun_claves(self):
+        def secretos(claves):
+            return mock.patch.object(app.st, "secrets", claves)
+        with secretos({}):
+            self.assertIsNone(app.obtener_modelo())
+        with secretos({"GEMINI_API_KEY": "falsa"}):
+            self.assertEqual(app.obtener_modelo().model_name, app.MODELO_GEMINI)
+        with secretos({"ANTHROPIC_API_KEY": "falsa"}):
+            self.assertEqual(app.obtener_modelo().model_name, app.MODELO_RESERVA)
+        with secretos({"GEMINI_API_KEY": "falsa", "ANTHROPIC_API_KEY": "falsa"}):
+            self.assertIsInstance(app.obtener_modelo(), FallbackModel)
 
 
 class Interfaz(unittest.TestCase):
@@ -95,7 +142,7 @@ class Interfaz(unittest.TestCase):
     def setUp(self):
         # Si algo intentara crear un cliente real, la prueba falla en lugar de gastar cuota
         parches = [
-            mock.patch("google.genai.Client", side_effect=AssertionError("llamada real a Gemini")),
+            mock.patch.object(app.Agent, "run_sync", side_effect=AssertionError("llamada real a la IA")),
             # AppTest también lee .streamlit/secrets.toml: hacemos como si no hubiera ninguna clave
             mock.patch.object(Secrets, "__getitem__", side_effect=KeyError("GEMINI_API_KEY")),
         ]

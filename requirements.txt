@@ -1,5 +1,5 @@
 streamlit>=1.38
-google-genai>=1.0
+pydantic-ai-slim[google,anthropic]>=2.60,<3
 pandas
 openpyxl
 pillow

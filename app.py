@@ -1,25 +1,38 @@
 """Cuadra tus gastos: empareja tickets y facturas con el extracto del banco y los agrupa por categoría.
 
-App Streamlit (Ruta A) con la API de Gemini (capa gratuita).
-- La IA (Gemini) LEE: saca los movimientos del extracto y los datos de cada ticket o factura.
+App Streamlit (Ruta A) con Pydantic AI: Gemini (capa gratuita) y, si falla, Claude (Anthropic) de reserva.
+- La IA LEE: saca los movimientos del extracto y los datos de cada ticket o factura.
 - Python CUADRA: empareja por importe y fecha y agrupa por categoría (cuadre.py).
-La clave se lee de los secretos de la plataforma: nunca se escribe en el código.
+Las claves se leen de los secretos de la plataforma: nunca se escriben en el código.
 """
 
 import io
+import os
 import time
 from pathlib import Path
 
+os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")  # sin el anuncio de Pydantic AI en la consola
+
 import pandas as pd
 import streamlit as st
-from google import genai
-from google.genai import errors, types
 from PIL import Image, ImageOps
 from pydantic import BaseModel
+from pydantic_ai import Agent, BinaryContent
+from pydantic_ai.exceptions import (
+    FallbackExceptionGroup, ModelAPIError, ModelConnectionError, ModelHTTPError,
+    ModelQuotaExceededError, ModelRateLimitError, ModelServerError, ModelUnavailableError,
+    UnexpectedModelBehavior,
+)
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.models.fallback import FallbackModel
+from pydantic_ai.models.google import GoogleModel
+from pydantic_ai.providers.anthropic import AnthropicProvider
+from pydantic_ai.providers.google import GoogleProvider
 
 from cuadre import CATEGORIAS, cuadrar
 
-MODELO = "gemini-3.8-flash"
+MODELO_GEMINI = "gemini-3.8-flash"
+MODELO_RESERVA = "claude-haiku-5-5"  # Anthropic: solo se usa si Gemini falla
 MAX_COMPROBANTES = 20
 COMPROBANTES_POR_LLAMADA = 5
 MAX_MB_ARCHIVO = 8
@@ -112,14 +125,14 @@ def reducir_imagen(archivo):
         salida = io.BytesIO()
         imagen.convert("RGB").save(salida, "JPEG", quality=85)
         return {**archivo, "datos": salida.getvalue(), "mime": "image/jpeg"}
-    except Exception:  # p. ej. HEIC: Gemini lo lee directamente
+    except Exception:  # p. ej. HEIC: Gemini lo lee directamente (Claude no)
         return archivo
 
 
 def contenido_extracto(archivo):
     """Prepara el extracto para la IA: texto si es CSV/Excel, el PDF tal cual si es PDF."""
     if archivo["mime"] == "application/pdf":
-        return types.Part.from_bytes(data=archivo["datos"], mime_type="application/pdf")
+        return BinaryContent(data=archivo["datos"], media_type="application/pdf")
     if archivo["nombre"].lower().endswith(".xlsx"):
         texto = pd.read_excel(io.BytesIO(archivo["datos"]), header=None).to_csv(index=False, header=False)
     else:
@@ -137,68 +150,94 @@ def contenido_extracto(archivo):
 
 # ---------- Llamadas a la IA ----------
 
-def obtener_cliente():
-    """Crea el cliente de Gemini con la clave de los secretos. Devuelve None si falta."""
-    try:
-        clave = st.secrets["GEMINI_API_KEY"]
-    except Exception:  # sin secrets.toml o sin la clave
+def obtener_modelo():
+    """Prepara Gemini y, de reserva, Claude con las claves de los secretos.
+
+    Basta con una de las dos claves. Con las dos, si Gemini falla (cuota, caída…) se usa Claude.
+    Devuelve None si no hay ninguna.
+    """
+    modelos = []
+    for nombre_clave, crear in [
+        ("GEMINI_API_KEY", lambda c: GoogleModel(MODELO_GEMINI, provider=GoogleProvider(api_key=c))),
+        ("ANTHROPIC_API_KEY", lambda c: AnthropicModel(MODELO_RESERVA, provider=AnthropicProvider(api_key=c))),
+    ]:
+        try:
+            modelos.append(crear(st.secrets[nombre_clave]))
+        except Exception:  # sin secrets.toml o sin esa clave
+            pass
+    if not modelos:
         return None
-    return genai.Client(api_key=clave)
+    return modelos[0] if len(modelos) == 1 else FallbackModel(*modelos)
+
+
+def codigo_error(e):
+    """Saca el código HTTP de un error de Pydantic AI (None si es de red o desconocido).
+
+    Si han fallado los dos modelos, cuenta el último: es el que ha impedido leer los archivos.
+    """
+    if isinstance(e, FallbackExceptionGroup):
+        e = e.exceptions[-1]
+    if isinstance(e, (ModelRateLimitError, ModelQuotaExceededError)):
+        return 429
+    if isinstance(e, ModelHTTPError):
+        return e.status_code
+    if isinstance(e, (ModelServerError, ModelUnavailableError)):
+        return 503
+    return None
 
 
 def mensaje_error(e):
     """Traduce un error de la API a un mensaje que entiende cualquier persona."""
-    if e.code == 429:
+    codigo = codigo_error(e)
+    if codigo == 429:
         return "Se ha agotado la cuota gratuita de la IA por ahora. Espere un minuto (o vuelva mañana si persiste) y pruebe de nuevo."
-    if e.code in (401, 403) or (e.code == 400 and "API key" in str(e)):
+    if codigo in (401, 403) or (codigo == 400 and "API key" in str(e)):
         return "La app no está bien configurada (clave no válida). Avise a quien la mantiene."
-    if e.code == 400:
+    if codigo == 400:
         return "La IA no ha podido abrir alguno de los archivos. Compruebe que no están dañados ni protegidos con contraseña."
-    if e.code and e.code >= 500:
+    if codigo and codigo >= 500:
         return "El servicio de IA no responde en este momento. Pruebe de nuevo en unos minutos."
-    return "No se han podido procesar los archivos. Pruebe de nuevo."
+    return "No hay conexión con el servicio de IA. Pruebe de nuevo en unos minutos."
 
 
-def llamar_gemini(cliente, contenido, prompt, esquema):
-    """Llama a Gemini pidiendo JSON con el esquema dado. Reintenta una vez si se agota la cuota.
+def llamar_ia(modelo, contenido, prompt, esquema):
+    """Pide a la IA una lista con el esquema dado. Reintenta una vez si se agota la cuota.
 
+    El FallbackModel ya pasa a Claude si Gemini falla; aquí solo se espera si fallan todos.
     Devuelve (lista_de_dicts, mensaje_de_error).
     """
-    config = types.GenerateContentConfig(
-        system_instruction=prompt,
-        temperature=0,
-        response_mime_type="application/json",
-        response_schema=list[esquema],
-    )
+    agente = Agent(modelo, output_type=list[esquema], instructions=prompt, model_settings={"temperature": 0})
     for intento in range(2):
         try:
-            respuesta = cliente.models.generate_content(model=MODELO, contents=contenido, config=config)
+            respuesta = agente.run_sync(contenido)
             break
-        except errors.APIError as e:
-            if e.code == 429 and intento == 0:
+        except (ModelAPIError, FallbackExceptionGroup) as e:
+            if codigo_error(e) == 429 and intento == 0:
                 st.info("Hay muchas consultas. Esperando 30 segundos para reintentar…")
                 time.sleep(30)
                 continue
             return None, mensaje_error(e)
+        except UnexpectedModelBehavior:  # la respuesta no encaja con el esquema
+            return None, "La IA no ha devuelto datos para estos archivos. Pruebe con otros o con fotos más nítidas."
         except Exception:
             return None, "No hay conexión con el servicio de IA. Pruebe de nuevo en unos minutos."
 
-    if not respuesta.parsed:
+    if not respuesta.output:
         return None, "La IA no ha devuelto datos para estos archivos. Pruebe con otros o con fotos más nítidas."
-    return [elemento.model_dump() for elemento in respuesta.parsed], None
+    return [elemento.model_dump() for elemento in respuesta.output], None
 
 
-def leer_extracto(cliente, archivo):
+def leer_extracto(modelo, archivo):
     try:
         contenido = contenido_extracto(archivo)
     except ValueError as e:
         return None, str(e)
     except Exception:
         return None, "No se ha podido abrir el extracto. Descárguelo de nuevo del banco en CSV, Excel o PDF."
-    return llamar_gemini(cliente, contenido, PROMPT_EXTRACTO, Movimiento)
+    return llamar_ia(modelo, [contenido], PROMPT_EXTRACTO, Movimiento)
 
 
-def leer_comprobantes(cliente, archivos, barra):
+def leer_comprobantes(modelo, archivos, barra):
     """Lee los comprobantes por lotes para no pasarse de la cuota por minuto."""
     leidos = []
     for inicio in range(0, len(archivos), COMPROBANTES_POR_LLAMADA):
@@ -206,8 +245,8 @@ def leer_comprobantes(cliente, archivos, barra):
         contenido = []
         for archivo in lote:
             contenido.append(f"Archivo: {archivo['nombre']}")
-            contenido.append(types.Part.from_bytes(data=archivo["datos"], mime_type=archivo["mime"]))
-        datos, error = llamar_gemini(cliente, contenido, PROMPT_COMPROBANTES, Comprobante)
+            contenido.append(BinaryContent(data=archivo["datos"], media_type=archivo["mime"]))
+        datos, error = llamar_ia(modelo, contenido, PROMPT_COMPROBANTES, Comprobante)
         if error:
             return None, error
         leidos.extend(datos)
@@ -265,8 +304,8 @@ with st.expander("ℹ️ Cómo se usa y qué pasa con mis datos"):
         "se separan pocos días (los pagos con tarjeta pueden tardar 1–3 días en aparecer en el banco). "
         "Si alguien adelantó varias compras y luego se le **reembolsó el total** con una transferencia, "
         "la app busca los tickets anteriores que **suman** ese importe.\n\n"
-        "⚠️ **Privacidad:** los archivos se envían a la IA de Google (Gemini) para leerlos. "
-        "En la versión gratuita, Google puede usarlos para mejorar sus servicios. "
+        "⚠️ **Privacidad:** los archivos se envían a la IA de Google (Gemini) para leerlos y, "
+        "si no responde, a la de Anthropic (Claude). En la versión gratuita, Google puede usarlos para mejorar sus servicios. "
         "**Para probar, use los datos de ejemplo**; con datos reales, tape antes el número de cuenta y su DNI."
     )
 
@@ -309,18 +348,18 @@ with st.expander("⚙️ Ajustes"):
 
 if st.button("Cuadrar gastos", type="primary"):
     aviso = validar(extracto, comprobantes)
-    cliente = None if aviso else obtener_cliente()
+    modelo = None if aviso else obtener_modelo()
     if aviso:
         st.warning(aviso)
-    elif cliente is None:
+    elif modelo is None:
         st.error("La app no está bien configurada (falta la clave). Avise a quien la mantiene.")
     else:
         barra = st.progress(0.0, text="Leyendo el extracto del banco…")
-        movimientos, error = leer_extracto(cliente, extracto)
+        movimientos, error = leer_extracto(modelo, extracto)
         if not error and not any(m["importe"] < 0 for m in movimientos):
             error = "No se ha encontrado ningún gasto en el extracto. Compruebe que ha subido el archivo correcto."
         if not error:
-            leidos, error = leer_comprobantes(cliente, comprobantes, barra)
+            leidos, error = leer_comprobantes(modelo, comprobantes, barra)
         barra.empty()
         if error:
             st.error(error)

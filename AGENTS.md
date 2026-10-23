@@ -16,22 +16,22 @@ texto visible: en español, trato de "usted", sin jerga informática ni contable
 
 | Archivo | Qué hace | Reglas |
 |---|---|---|
-| `app.py` | Interfaz + llamadas a Gemini para **leer** documentos | La IA solo extrae datos con esquema JSON (Pydantic). Nunca decide emparejamientos. |
+| `app.py` | Interfaz + llamadas a la IA (Gemini, con Claude de reserva) para **leer** documentos | La IA solo extrae datos con esquema JSON (Pydantic). Nunca decide emparejamientos. |
 | `cuadre.py` | **Empareja** (uno a uno y reembolsos agrupados) y **agrupa** con reglas fijas | Python puro, sin IA ni Streamlit, para poder probarlo y explicarlo. |
 | `ejemplos/` | Datos inventados + `generar_ejemplos.py` | Si añades un caso, regenera y actualiza ESPECIFICACION §5. |
 
 ## Stack
 
 - Python 3.11+, Streamlit, pandas, Pillow, openpyxl.
-- SDK `google-genai` (`from google import genai`), modelo `gemini-3.8-flash`, `temperature=0`,
-  `response_mime_type="application/json"` + `response_schema`.
+- Pydantic AI (`pydantic-ai-slim[google,anthropic]`): `Agent` con `output_type=list[Esquema]`,
+  `temperature=0` y un `FallbackModel`: `gemini-3.8-flash` y, si falla, `claude-haiku-5-5` (Anthropic).
 - Despliegue: Streamlit Community Cloud desde un repositorio público de GitHub.
 - Dependencias: solo las de `requirements.txt`. No añadas otras sin preguntar.
 
 ## Reglas obligatorias
 
 1. **Nunca** escribas una clave de API en el código, en un `.md` ni en un commit.
-   La clave se lee solo con `st.secrets["GEMINI_API_KEY"]`.
+   Las claves se leen solo con `st.secrets["GEMINI_API_KEY"]` y `st.secrets["ANTHROPIC_API_KEY"]`.
 2. **Nunca** uses datos personales ni bancarios reales: NIF `B0000000X`, tarjeta `****4444`,
    nombres de comercios inventados.
 3. Todo error se muestra con `st.error` / `st.warning` y un mensaje que un no técnico entienda
@@ -51,12 +51,12 @@ texto visible: en español, trato de "usted", sin jerga informática ni contable
 
 ```bash
 pip install -r requirements.txt
-python -m unittest discover -s tests -v   # pruebas automáticas, sin gastar cuota de la IA
-cp .streamlit/secrets.toml.example .streamlit/secrets.toml   # pegar clave
+python -m unittest discover -s tests -v   # pruebas automáticas, sin gastar cuota de la IA (GitHub Actions las pasa en cada push)
+cp .streamlit/secrets.toml.example .streamlit/secrets.toml   # pegar claves
 streamlit run app.py          # → "Probar con datos de ejemplo" → "Cuadrar gastos"
 ```
 
-Después, recorrer los criterios de aceptación CA1–CA17 de `ESPECIFICACION.md` que no cubren las
+Después, recorrer los criterios de aceptación CA1–CA18 de `ESPECIFICACION.md` que no cubren las
 pruebas automáticas. En Claude Code lo guía la skill `/test`.
 
 ## Al terminar una tarea

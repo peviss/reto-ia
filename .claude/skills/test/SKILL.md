@@ -47,6 +47,7 @@ qué CA afecta y la causa probable.
 | CA10 | `test_cuadre.py` (comprobante `legible=False`) | Subir una foto que no sea un ticket |
 | CA11 | `test_app.py` (`AppTest` sin clave) | — |
 | CA12 | `test_app.py` (429 dos veces → un reintento y mensaje) | — |
+| CA18 | `test_app.py` (Gemini falso sin cuota → responde el Claude falso, sin esperar) | Con las dos claves y una clave de Gemini falsa, «Cuadrar gastos» con el ejemplo |
 | CA14 | — | Una persona que no conoce la app, con el ejemplo, < 2 min |
 
 Las pruebas automáticas comprueban las **reglas**; que la **IA lea bien** los archivos solo se ve

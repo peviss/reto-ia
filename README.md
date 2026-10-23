@@ -35,7 +35,8 @@ La especificación completa está en [ESPECIFICACION.md](ESPECIFICACION.md). Res
 | CA5 | Ticket pagado en efectivo | Aparece en *Qué falta* → «No aparece en el extracto» |
 | CA8 | Pulsar «Cuadrar» sin archivos | Aviso; no se llama a la IA |
 | CA10 | Foto que no es un ticket | Aparece como «No se ha podido leer» |
-| CA12 | Cuota de Gemini agotada | Un reintento y mensaje claro; la app no se rompe |
+| CA12 | Cuota agotada en Gemini y en Claude | Un reintento y mensaje claro; la app no se rompe |
+| CA18 | Cuota de Gemini agotada, con clave de Anthropic | Lee con Claude sin esperar; mismo resultado |
 | CA16 | Reembolso con varias combinaciones posibles | Se agrupa una y aparece el aviso «revisar» |
 
 ## Cómo se usa
@@ -51,7 +52,7 @@ La especificación completa está en [ESPECIFICACION.md](ESPECIFICACION.md). Res
 | Pieza | Detalle |
 |---|---|
 | Interfaz | Streamlit (una página) |
-| Lectura (IA) | API de Gemini `gemini-3.8-flash`, multimodal, salida JSON con esquema; 5 comprobantes por llamada |
+| Lectura (IA) | Pydantic AI: Gemini `gemini-3.8-flash` y, si falla, Claude `claude-haiku-5-5` de reserva (`FallbackModel`); multimodal, salida con esquema; 5 comprobantes por llamada |
 | Cuadre (Python) | `cuadre.py`: (1) uno a uno: mismo importe (±1 céntimo) y fecha a ≤ 4 días; (2) reembolsos: varios tickets anteriores que suman exactamente un pago (p. ej. una transferencia a quien adelantó las compras) |
 | Errores | Mensajes claros para cuota agotada (con reintento), clave, archivos dañados, demasiado grandes o ilegibles |
 | Clave | En *Settings → Secrets* de Streamlit, nunca en el código |

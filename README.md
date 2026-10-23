@@ -35,7 +35,8 @@ La especificación completa está en [ESPECIFICACION.md](ESPECIFICACION.md). Res
 | CA5 | Ticket pagado en efectivo | Aparece en *Qué falta* → «No aparece en el extracto» |
 | CA8 | Pulsar «Cuadrar» sin archivos | Aviso; no se llama a la IA |
 | CA10 | Foto que no es un ticket | Aparece como «No se ha podido leer» |
-| CA12 | Cuota de Gemini agotada | Un reintento y mensaje claro; la app no se rompe |
+| CA12 | Cuota agotada en Gemini y en Claude | Un reintento y mensaje claro; la app no se rompe |
+| CA18 | Cuota de Gemini agotada, con clave de Anthropic | Lee con Claude sin esperar; mismo resultado |
 | CA16 | Reembolso con varias combinaciones posibles | Se agrupa una y aparece el aviso «revisar» |
 
 ## Cómo se usa

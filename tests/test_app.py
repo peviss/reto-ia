@@ -109,7 +109,7 @@ class ModeloDeReserva(unittest.TestCase):
             resultado = app.llamar_ia(modelo, ["hola"], "prompt", app.Comprobante)
         return resultado, espera
 
-    def test_gemini_sin_cuota_usa_claude_sin_esperar(self):
+    def test_CA18_gemini_sin_cuota_usa_claude_sin_esperar(self):
         gemini, claude = ModeloFalso(error_api(429)), ModeloFalso()
         (datos, error), espera = self.llamar(FallbackModel(gemini, claude))
         self.assertIsNone(error)

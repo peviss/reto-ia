@@ -17,7 +17,7 @@ Para 30–40 movimientos al mes son 1–2 horas, y la gestoría suele devolver u
 
 **Qué resuelve la IA y qué queda fuera.**
 
-| Lo hace la IA (Gemini) | Lo hace Python (reglas fijas) | Queda fuera |
+| Lo hace la IA (Gemini, con Claude de reserva) | Lo hace Python (reglas fijas) | Queda fuera |
 |---|---|---|
 | Leer el extracto en cualquier formato de banco (CSV, Excel, PDF) | Emparejar ticket ↔ movimiento (mismo importe, fecha cercana) | Contabilidad oficial, IVA deducible, modelos de Hacienda |
 | | Reembolsos: varios tickets ↔ un pago (combinación que suma el importe) | |
@@ -52,7 +52,7 @@ Compras online · Otros. Si la IA devuelve otra, se convierte en "Otros".
 
 ### 2.1 Estado de las funcionalidades
 
-**Implementadas: 3 / 5** · Verificadas: 0 / 5 · Última actualización: 2026-10-21
+**Implementadas: 3 / 5** · Verificadas: 0 / 5 · Última actualización: 2026-10-22
 
 | # | Funcionalidad | Estado | Dónde está | Criterios | Notas |
 |---|---|---|---|---|---|
@@ -68,7 +68,7 @@ Estados: 📝 Planeada · 🚧 En curso · ✅ Implementada (el código existe y
 ## 3. Interfaz (Streamlit, una página)
 
 1. Título y una frase que explica qué hace.
-2. Desplegable "Cómo se usa y qué pasa con mis datos".
+2. Desplegable "Cómo se usa y qué pasa con mis datos" (avisa de que los archivos van a Google y, si no responde, a Anthropic).
 3. Botón **🧪 Probar con datos de ejemplo**.
 4. Dos subidas de archivos en columnas: **Paso 1** extracto, **Paso 2** tickets y facturas.
 5. Desplegable **Ajustes**: días de tolerancia y ventana de reembolsos.
@@ -84,6 +84,8 @@ Estados: 📝 Planeada · 🚧 En curso · ✅ Implementada (el código existe y
 - **Por qué:** hace falta leer fotos y PDF de formatos muy distintos. Un OCR clásico saca el texto,
   pero no sabe cuál es el total ni la fecha. Gemini es multimodal, devuelve datos estructurados y
   tiene capa gratuita sin GPU. Un RAG no aplica: no hay que buscar en una base documental.
+  Claude va de reserva porque la cuota gratuita de Gemini se agota pronto: así la app sigue
+  funcionando. Pydantic AI permite usar los dos con el mismo código, esquemas y prompts.
 - **Cómo se ahorra cuota:** las fotos se reducen a 1600 px (~300 KB); se envían 5 comprobantes por
   llamada, así que 20 comprobantes son 1 + 4 = 5 llamadas. El resultado se guarda y mover el ajuste
   de días no vuelve a llamar a la IA.
@@ -96,6 +98,7 @@ Estados: 📝 Planeada · 🚧 En curso · ✅ Implementada (el código existe y
 | Clave no válida (400/401/403) | "La app no está bien configurada (clave no válida)…" |
 | Cuota agotada (429) en el último modelo | Espera 30 s y reintenta una vez; si sigue: "Se ha agotado la cuota gratuita… espere un minuto (o vuelva mañana si persiste)" |
 | Archivo dañado (400) | "La IA no ha podido abrir alguno de los archivos…" |
+| Foto HEIC que no se ha podido convertir y Gemini falla | Claude no lee HEIC: mismo mensaje que el archivo dañado |
 | Error del servidor (5xx) / sin red | Mensaje de probar en unos minutos |
 | La IA se salta un archivo | Aparece como "No se ha podido leer" en *Qué falta* |
 | La IA lee mal un importe | No cuadrará: el ticket y el gasto aparecen en *Qué falta*; el usuario lo ve en *Lo que ha leído la IA* |
@@ -105,8 +108,8 @@ Estados: 📝 Planeada · 🚧 En curso · ✅ Implementada (el código existe y
 Datos de prueba: `ejemplos/` (inventados, regenerables con `python ejemplos/generar_ejemplos.py`).
 
 **Pruebas automáticas** (`python -m unittest discover -s tests -v`, sin llamar a la IA): cubren
-CA1–CA13 y CA15–CA17 con lo que la IA *debería* leer de los ejemplos (`tests/datos_ejemplo.py`) y
-un cliente de IA falso para los errores. Quedan para la prueba manual con la app: que la IA lea
+CA1–CA13 y CA15–CA18 con lo que la IA *debería* leer de los ejemplos (`tests/datos_ejemplo.py`) y
+modelos de IA falsos para los errores y el paso a Claude. Quedan para la prueba manual con la app: que la IA lea
 bien los ejemplos y CA14. Cada prueba lleva en su nombre el ID del criterio (`test_CA7_…`).
 
 | ID | Caso | Entrada | Resultado esperado |
@@ -121,12 +124,13 @@ bien los ejemplos y CA14. Cada prueba lleva en su nombre el ID del criterio (`te
 | CA8 | Sin archivos | Pulsar "Cuadrar" sin nada | Aviso amarillo; no se llama a la IA |
 | CA9 | Demasiados archivos | 21 comprobantes o archivo > 8 MB | Aviso con qué hacer; no se llama a la IA |
 | CA10 | Foto ilegible / no es un ticket | Foto de un paisaje | Aparece como "No se ha podido leer" |
-| CA11 | Sin clave | Borrar el secreto | Mensaje rojo; la app no se rompe |
-| CA12 | Cuota agotada | 429 repetido | Reintento + mensaje claro; la app no se rompe |
+| CA11 | Sin clave | Borrar los dos secretos (`GEMINI_API_KEY` y `ANTHROPIC_API_KEY`) | Mensaje rojo; la app no se rompe |
+| CA12 | Cuota agotada | 429 repetido en el último modelo | Reintento + mensaje claro; la app no se rompe |
 | CA13 | Tolerancia 0 | Ajuste a 0 días con el ejemplo | Solo cuadran los gastos con la misma fecha en ticket y banco; no se llama de nuevo a la IA |
 | CA15 | Reembolso agrupado | Transferencia a Marta 51,65 € (28/10) + tickets ferretería 23,45 + frutería 15,70 + copistería 12,50 | 🔗 3 filas con el mismo *Mov.*, cada una en su categoría; suman 51,65 € |
 | CA16 | Reembolso ambiguo | Pago de 30 € con tickets de 10, 20, 15 y 15 € | Se agrupa una combinación y aparece el aviso «revisar» |
 | CA17 | Sin búsqueda de reembolsos | Ventana = 0 con el ejemplo | La transferencia queda "Falta comprobante" y los 3 tickets como sueltos |
+| CA18 | Modelo de reserva | Las dos claves; Gemini sin cuota (o clave de Gemini falsa) | Lee con Claude sin esperar ni avisar; el resultado es el mismo |
 | CA14 | Usuario no técnico | Persona que no conoce la app | Con el ejemplo, entiende qué le falta en menos de 2 minutos sin ayuda |
 
 ## 6. Prompts reutilizables

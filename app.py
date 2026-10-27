@@ -6,7 +6,9 @@ App Streamlit (Ruta A) con Pydantic AI: Gemini (capa gratuita) y, si falla, Clau
 Las claves se leen de los secretos de la plataforma: nunca se escriben en el código.
 """
 
+import base64
 import io
+import logging
 import os
 import time
 from pathlib import Path
@@ -38,6 +40,11 @@ COMPROBANTES_POR_LLAMADA = 5
 MAX_MB_ARCHIVO = 8
 MAX_LINEAS_EXTRACTO = 300
 CARPETA_EJEMPLOS = Path(__file__).parent / "ejemplos"
+
+# Logs en la consola donde corre «streamlit run» (las librerías, solo avisos)
+logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(levelname)s [%(name)s] %(message)s")
+log = logging.getLogger("cuadra")
+log.setLevel(logging.INFO)
 
 TIPOS_MIME = {
     ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp",
@@ -164,9 +171,11 @@ def obtener_modelo():
         try:
             modelos.append(crear(st.secrets[nombre_clave]))
         except Exception:  # sin secrets.toml o sin esa clave
-            pass
+            log.info("Sin %s: ese modelo no se usará", nombre_clave)
     if not modelos:
+        log.error("No hay ninguna clave de IA en los secretos")
         return None
+    log.info("Modelos disponibles (en orden): %s", ", ".join(m.model_name for m in modelos))
     return modelos[0] if len(modelos) == 1 else FallbackModel(*modelos)
 
 
@@ -208,20 +217,33 @@ def llamar_ia(modelo, contenido, prompt, esquema):
     """
     agente = Agent(modelo, output_type=list[esquema], instructions=prompt, model_settings={"temperature": 0})
     for intento in range(2):
+        inicio = time.perf_counter()
         try:
             respuesta = agente.run_sync(contenido)
             break
         except (ModelAPIError, FallbackExceptionGroup) as e:
+            log.warning("Falló la IA (%s, código %s): %r", esquema.__name__, codigo_error(e), e)
             if codigo_error(e) == 429 and intento == 0:
+                log.info("Reintento en 30 s por cuota")
                 st.info("Hay muchas consultas. Esperando 30 segundos para reintentar…")
                 time.sleep(30)
                 continue
             return None, mensaje_error(e)
-        except UnexpectedModelBehavior:  # la respuesta no encaja con el esquema
+        except UnexpectedModelBehavior as e:  # la respuesta no encaja con el esquema
+            log.warning("Respuesta de la IA que no encaja con %s: %s", esquema.__name__, e)
             return None, "La IA no ha devuelto datos para estos archivos. Pruebe con otros o con fotos más nítidas."
         except Exception:
+            log.exception("Error inesperado llamando a la IA (%s)", esquema.__name__)
             return None, "No hay conexión con el servicio de IA. Pruebe de nuevo en unos minutos."
 
+    usado = respuesta.response.model_name or "?"
+    log.info(
+        "%s: %d elementos con %s en %.1f s (tokens: %s entrada, %s salida)",
+        esquema.__name__, len(respuesta.output), usado, time.perf_counter() - inicio,
+        respuesta.usage.input_tokens, respuesta.usage.output_tokens,
+    )
+    if MODELO_GEMINI not in usado:
+        log.warning("Gemini no estaba disponible: ha respondido el modelo de reserva (%s)", usado)
     if not respuesta.output:
         return None, "La IA no ha devuelto datos para estos archivos. Pruebe con otros o con fotos más nítidas."
     return [elemento.model_dump() for elemento in respuesta.output], None
@@ -231,9 +253,12 @@ def leer_extracto(modelo, archivo):
     try:
         contenido = contenido_extracto(archivo)
     except ValueError as e:
+        log.info("Extracto rechazado (%s): %s", archivo["nombre"], e)
         return None, str(e)
     except Exception:
+        log.exception("No se pudo abrir el extracto %s", archivo["nombre"])
         return None, "No se ha podido abrir el extracto. Descárguelo de nuevo del banco en CSV, Excel o PDF."
+    log.info("Leyendo extracto %s (%.1f KB)", archivo["nombre"], len(archivo["datos"]) / 1024)
     return llamar_ia(modelo, [contenido], PROMPT_EXTRACTO, Movimiento)
 
 
@@ -242,6 +267,8 @@ def leer_comprobantes(modelo, archivos, barra):
     leidos = []
     for inicio in range(0, len(archivos), COMPROBANTES_POR_LLAMADA):
         lote = [reducir_imagen(a) for a in archivos[inicio:inicio + COMPROBANTES_POR_LLAMADA]]
+        log.info("Leyendo comprobantes %d-%d de %d: %s", inicio + 1, inicio + len(lote), len(archivos),
+                 ", ".join(a["nombre"] for a in lote))
         contenido = []
         for archivo in lote:
             contenido.append(f"Archivo: {archivo['nombre']}")
@@ -256,6 +283,7 @@ def leer_comprobantes(modelo, archivos, barra):
     nombres_leidos = {c["archivo"] for c in leidos}
     for archivo in archivos:
         if archivo["nombre"] not in nombres_leidos:
+            log.warning("La IA se ha saltado %s: se marca como no legible", archivo["nombre"])
             leidos.append({"archivo": archivo["nombre"], "comercio": "", "fecha": "", "total": 0.0, "categoria": "Otros", "legible": False})
     return leidos, None
 
@@ -284,6 +312,49 @@ def a_excel(gastos, resumen, sueltos):
 
 
 # ---------- Interfaz ----------
+
+@st.dialog("Comprobante", width="large")
+def ver_comprobante(nombre, archivos, leidos, gastos):
+    """Muestra el ticket o la factura y, debajo, lo que ha leído la IA y con qué gasto va."""
+    st.subheader(nombre)
+    archivo = archivos.get(nombre)
+    if archivo is None:
+        st.warning("No se encuentra el archivo. Vuelva a subirlo y pulse «Cuadrar gastos».")
+    elif archivo["mime"] == "application/pdf":
+        pdf = base64.b64encode(archivo["datos"]).decode()
+        st.html(f'<iframe src="data:application/pdf;base64,{pdf}" width="100%" height="600"></iframe>')
+    else:
+        try:
+            st.image(ImageOps.exif_transpose(Image.open(io.BytesIO(archivo["datos"]))))
+        except Exception:  # p. ej. HEIC: el navegador no lo sabe mostrar
+            st.info("Esta foto no se puede mostrar aquí, pero puede descargarla.")
+    if archivo is not None:
+        st.download_button("⬇️ Descargar el archivo", data=archivo["datos"], file_name=nombre, mime=archivo["mime"])
+
+    st.write("**Lo que ha leído la IA**")
+    leido = next((c for c in leidos if c["archivo"] == nombre), None)
+    if leido:
+        st.dataframe(pd.DataFrame([{
+            "Comercio": leido["comercio"], "Fecha": leido["fecha"], "Total (€)": leido["total"],
+            "Categoría": leido["categoria"], "Se ha podido leer": "Sí" if leido["legible"] else "No",
+        }]), hide_index=True)
+    st.write("**Gasto del banco con el que va**")
+    gasto = gastos[gastos["Comprobante"] == nombre]
+    if gasto.empty:
+        st.caption("No aparece en el extracto (puede ser un pago en efectivo, de otra tarjeta o de otro mes).")
+    else:
+        st.dataframe(gasto, hide_index=True)
+
+
+def tabla_con_comprobantes(tabla, columna, clave):
+    """Tabla en la que, al pulsar una celda de `columna`, se abre ese comprobante."""
+    def al_pulsar():
+        celdas = st.session_state[clave].selection.cells
+        if celdas and celdas[0][1] == columna:
+            st.session_state.abrir_comprobante = tabla.iloc[celdas[0][0]][columna]
+
+    st.dataframe(tabla, hide_index=True, key=clave, on_select=al_pulsar, selection_mode="single-cell")
+
 
 st.set_page_config(page_title="Cuadra tus gastos", page_icon="🧾", layout="wide")
 
@@ -364,11 +435,12 @@ if st.button("Cuadrar gastos", type="primary"):
         if error:
             st.error(error)
         else:
-            st.session_state.resultado = (movimientos, leidos)
+            # Se guardan también los archivos para poder enseñarlos al pulsar sobre ellos
+            st.session_state.resultado = (movimientos, leidos, {a["nombre"]: a for a in comprobantes})
 
 # El resultado se guarda para poder mover el ajuste de días sin volver a llamar a la IA
 if "resultado" in st.session_state:
-    movimientos, leidos = st.session_state.resultado
+    movimientos, leidos, archivos = st.session_state.resultado
     gastos, resumen, sueltos = cuadrar(movimientos, leidos, tolerancia, ventana_reembolso)
 
     # Un reembolso agrupado ocupa varias filas: contamos movimientos por su n.º («Mov.»)
@@ -394,8 +466,9 @@ if "resultado" in st.session_state:
         if not resumen.empty:
             st.bar_chart(resumen, x="Categoría", y="Total (€)", horizontal=True)
     with pestanas[1]:
-        st.caption("🔗 = varios tickets justifican un solo pago (por ejemplo, una transferencia de reembolso). Comparten n.º de «Mov.».")
-        st.dataframe(gastos, hide_index=True)
+        st.caption("🔗 = varios tickets justifican un solo pago (por ejemplo, una transferencia de reembolso). Comparten n.º de «Mov.». "
+                   "Pulse sobre un comprobante para verlo.")
+        tabla_con_comprobantes(gastos, "Comprobante", "tabla_gastos")
     with pestanas[2]:
         faltan = gastos[gastos["Comprobante"] == ""]
         st.subheader("Gastos del banco sin ticket ni factura")
@@ -408,14 +481,20 @@ if "resultado" in st.session_state:
         if sueltos.empty:
             st.success("Todos los comprobantes están en el extracto.")
         else:
-            st.caption("Pueden ser pagos en efectivo, de otra tarjeta, de otro mes, o fotos que la IA no ha leído bien.")
-            st.dataframe(sueltos, hide_index=True)
+            st.caption("Pueden ser pagos en efectivo, de otra tarjeta, de otro mes, o fotos que la IA no ha leído bien. "
+                       "Pulse sobre un archivo para verlo.")
+            tabla_con_comprobantes(sueltos, "Archivo", "tabla_sueltos")
     with pestanas[3]:
         st.caption("Compruebe que los importes y fechas coinciden con sus documentos: la IA puede equivocarse.")
         st.write("**Comprobantes**")
         st.dataframe(pd.DataFrame(leidos), hide_index=True)
         st.write("**Movimientos del extracto**")
         st.dataframe(pd.DataFrame(movimientos), hide_index=True)
+
+    # Se abre aquí (y no en la tabla) para que no vuelva a salir al mover un ajuste
+    nombre = st.session_state.pop("abrir_comprobante", "")
+    if nombre:
+        ver_comprobante(nombre, archivos, leidos, gastos)
 
     st.download_button(
         "⬇️ Descargar en Excel (para la gestoría)",

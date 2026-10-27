@@ -4,6 +4,7 @@ App Streamlit (Ruta A) con Pydantic AI: Gemini (capa gratuita) y, si falla, Clau
 - La IA LEE: saca los movimientos del extracto y los datos de cada ticket o factura.
 - Python CUADRA: empareja por importe y fecha y agrupa por categoría (cuadre.py).
 Las claves se leen de los secretos de la plataforma: nunca se escriben en el código.
+Lo que lee la IA se guarda en el navegador del usuario para no leerlo dos veces (almacen.py).
 """
 
 import base64
@@ -31,6 +32,7 @@ from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.google import GoogleProvider
 
+import almacen
 from cuadre import CATEGORIAS, cuadrar
 
 MODELO_GEMINI = "gemini-3.8-flash"
@@ -288,18 +290,65 @@ def leer_comprobantes(modelo, archivos, barra):
     return leidos, None
 
 
-def validar(extracto, comprobantes):
-    """Comprueba la entrada antes de gastar cuota. Devuelve un aviso o None."""
-    if extracto is None:
+def leer_extracto_con_memoria(modelo, archivo):
+    """Como leer_extracto, pero si este mismo extracto ya se leyó antes, usa lo guardado."""
+    clave = almacen.huella("extracto", archivo)
+    guardado = almacen.lectura(clave)
+    if guardado is not None:
+        log.info("Extracto %s: ya se había leído, no se llama a la IA", archivo["nombre"])
+        return guardado, None
+    movimientos, error = leer_extracto(modelo, archivo)
+    if not error:
+        almacen.guardar_lecturas({clave: movimientos})
+    return movimientos, error
+
+
+def leer_comprobantes_con_memoria(modelo, archivos, barra):
+    """Como leer_comprobantes, pero solo manda a la IA los que no se han leído antes."""
+    claves = {a["nombre"]: almacen.huella("comprobante", a) for a in archivos}
+    ya_leidos, por_leer = [], []
+    for archivo in archivos:
+        guardado = almacen.lectura(claves[archivo["nombre"]])
+        if guardado is None:
+            por_leer.append(archivo)
+        else:  # el nombre puede haber cambiado: manda el de ahora
+            ya_leidos.append({**guardado, "archivo": archivo["nombre"]})
+    if ya_leidos:
+        log.info("%d comprobantes ya se habían leído, no se llama a la IA para ellos", len(ya_leidos))
+    if not por_leer:
+        return ya_leidos, None
+
+    nuevos, error = leer_comprobantes(modelo, por_leer, barra)
+    if error:
+        return None, error
+    # Los ilegibles no se guardan: así, si se vuelven a subir, la IA lo intenta de nuevo
+    almacen.guardar_lecturas({claves[c["archivo"]]: c for c in nuevos if c["legible"] and c["archivo"] in claves})
+    return ya_leidos + nuevos, None
+
+
+def validar(extracto, comprobantes, editando=False):
+    """Comprueba la entrada antes de gastar cuota. Devuelve un aviso o None.
+
+    Si se está editando un cuadre guardado, ya tiene extracto: basta con subir algo nuevo.
+    """
+    if editando and extracto is None and not comprobantes:
+        return "Suba más tickets o facturas (o un extracto nuevo) para añadirlos a este cuadre."
+    if not editando and extracto is None:
         return "Falta el extracto del banco. Súbalo en el paso 1 o pulse «Probar con datos de ejemplo»."
-    if not comprobantes:
+    if not editando and not comprobantes:
         return "Faltan los tickets o facturas. Súbalos en el paso 2."
     if len(comprobantes) > MAX_COMPROBANTES:
         return f"Ha subido {len(comprobantes)} comprobantes. El máximo es {MAX_COMPROBANTES} cada vez: hágalo por partes (por ejemplo, por semanas)."
-    for archivo in [extracto, *comprobantes]:
+    for archivo in [a for a in [extracto, *comprobantes] if a is not None]:
         if len(archivo["datos"]) > MAX_MB_ARCHIVO * 1024 * 1024:
             return f"El archivo «{archivo['nombre']}» pesa más de {MAX_MB_ARCHIVO} MB. Haga la foto de nuevo o reduzca el PDF."
     return None
+
+
+def juntar_comprobantes(anteriores, nuevos):
+    """Añade los comprobantes nuevos a los de un cuadre. Si un archivo se llama igual, manda el nuevo."""
+    nombres_nuevos = {c["archivo"] for c in nuevos}
+    return [c for c in anteriores if c["archivo"] not in nombres_nuevos] + nuevos
 
 
 def a_excel(gastos, resumen, sueltos):
@@ -314,12 +363,18 @@ def a_excel(gastos, resumen, sueltos):
 # ---------- Interfaz ----------
 
 @st.dialog("Comprobante", width="large")
-def ver_comprobante(nombre, archivos, leidos, gastos):
-    """Muestra el ticket o la factura y, debajo, lo que ha leído la IA y con qué gasto va."""
+def ver_comprobante(nombre, archivos, leidos, gastos, huellas):
+    """Muestra el ticket o la factura y, debajo, lo que ha leído la IA y con qué gasto va.
+
+    Si el archivo se ha subido en esta sesión, se muestra desde aquí; si no, desde el navegador (IndexedDB).
+    """
     st.subheader(nombre)
     archivo = archivos.get(nombre)
-    if archivo is None:
-        st.warning("No se encuentra el archivo. Vuelva a subirlo y pulse «Cuadrar gastos».")
+    if archivo is None and nombre in huellas:
+        almacen.ver_archivo(huellas[nombre], nombre)
+    elif archivo is None:  # cuadre guardado con una versión anterior, sin archivos
+        st.warning("Este comprobante se guardó sin su archivo. "
+                   "Vuelva a subirlo y pulse «Añadir al cuadre» (no se volverá a leer con la IA).")
     elif archivo["mime"] == "application/pdf":
         pdf = base64.b64encode(archivo["datos"]).decode()
         st.html(f'<iframe src="data:application/pdf;base64,{pdf}" width="100%" height="600"></iframe>')
@@ -377,23 +432,86 @@ with st.expander("ℹ️ Cómo se usa y qué pasa con mis datos"):
         "la app busca los tickets anteriores que **suman** ese importe.\n\n"
         "⚠️ **Privacidad:** los archivos se envían a la IA de Google (Gemini) para leerlos y, "
         "si no responde, a la de Anthropic (Claude). En la versión gratuita, Google puede usarlos para mejorar sus servicios. "
-        "**Para probar, use los datos de ejemplo**; con datos reales, tape antes el número de cuenta y su DNI."
+        "**Para probar, use los datos de ejemplo**; con datos reales, tape antes el número de cuenta y su DNI.\n\n"
+        "💾 **Qué se guarda:** cada cuadre, lo que ha leído la IA y las fotos y PDF de los comprobantes se guardan "
+        "**solo en este navegador** (no en nuestro servidor). Si el ordenador es compartido, elimine sus cuadres al terminar. "
+        "En la barra lateral, **Mis cuadres**, puede abrir uno, añadirle más tickets o empezar uno nuevo. "
+        "Los archivos ya leídos no se vuelven a mandar a la IA. Puede borrarlo todo en ⚙️ Ajustes."
     )
 
-if st.button("🧪 Probar con datos de ejemplo (inventados)"):
+
+
+# ---------- Historial de cuadres (barra lateral) ----------
+
+def empezar(id_cuadre=None):
+    """Abre un cuadre guardado, o uno nuevo y vacío si id_cuadre es None."""
+    st.session_state.cuadre_activo = id_cuadre
+    st.session_state.archivos = {}  # los archivos subidos son de otro cuadre
+    st.session_state.ejemplo = False
+    st.session_state.subida = st.session_state.get("subida", 0) + 1  # vacía las subidas de archivos
+
+
+def renombrar():
+    nombre = st.session_state[f"nombre_{st.session_state.get('subida', 0)}"].strip()
+    activo = almacen.cuadre(st.session_state.get("cuadre_activo"))
+    if activo and nombre:
+        almacen.guardar_cuadre({**activo, "nombre": nombre})
+
+
+with st.sidebar:
+    st.header("🗂️ Mis cuadres")
+    st.button("➕ Nuevo cuadre", on_click=empezar, width="stretch", type="primary")
+    historial = almacen.cuadres()
+    if not almacen.cargado() and not historial:
+        st.caption("Buscando cuadres guardados…")
+    elif not historial:
+        st.caption("Aún no hay cuadres guardados. Cuando cuadre sus gastos, aparecerán aquí.")
+    for guardado in historial:
+        abierto = guardado["id"] == st.session_state.get("cuadre_activo")
+        st.button(
+            f"{'📂' if abierto else '📄'} {guardado['nombre']}", key=f"abrir_{guardado['id']}",
+            on_click=empezar, args=(guardado["id"],), width="stretch",
+            disabled=abierto, help="Abrir este cuadre",
+        )
+        st.caption(f"{guardado.get('fecha') or 'Ahora'} · {len(guardado['leidos'])} comprobantes")
+    st.caption("Se guardan solo en este navegador.")
+
+activo = almacen.cuadre(st.session_state.get("cuadre_activo"))
+subida = st.session_state.get("subida", 0)  # cambia la clave de las subidas para vaciarlas
+
+if activo:
+    st.subheader(f"📂 {activo['nombre']}")
+    st.caption(f"Extracto «{activo['extracto']}» · {len(activo['leidos'])} comprobantes · "
+               f"guardado {activo.get('fecha') or 'ahora'}. Suba más tickets o facturas y pulse **Añadir al cuadre**.")
+    c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
+    c1.text_input("Nombre del cuadre", value=activo["nombre"], key=f"nombre_{subida}", on_change=renombrar)
+    if c2.button("🗑️ Eliminar este cuadre", width="stretch"):
+        almacen.eliminar_cuadre(activo["id"])
+        empezar()
+        st.rerun()
+else:
+    st.subheader("Nuevo cuadre")
+
+def probar_ejemplo():
+    empezar()  # el ejemplo es siempre un cuadre nuevo
     st.session_state.ejemplo = True
-    st.session_state.pop("resultado", None)
+
+
+st.button("🧪 Probar con datos de ejemplo (inventados)", on_click=probar_ejemplo)
 
 usar_ejemplo = st.session_state.get("ejemplo", False)
 
 col1, col2 = st.columns(2)
 with col1:
-    subido_extracto = st.file_uploader("**Paso 1.** Extracto del banco", type=["csv", "xlsx", "pdf"])
+    subido_extracto = st.file_uploader(
+        "**Paso 1.** Extracto del banco" + (" (solo si quiere cambiarlo)" if activo else ""),
+        type=["csv", "xlsx", "pdf"], key=f"extracto_{subida}",
+    )
 with col2:
     subidos_comprobantes = st.file_uploader(
-        "**Paso 2.** Tickets y facturas",
+        "**Paso 2.** " + ("Más tickets y facturas" if activo else "Tickets y facturas"),
         type=["jpg", "jpeg", "png", "webp", "heic", "pdf"],
-        accept_multiple_files=True,
+        accept_multiple_files=True, key=f"comprobantes_{subida}",
     )
 
 if subido_extracto or subidos_comprobantes:
@@ -416,9 +534,14 @@ with st.expander("⚙️ Ajustes"):
         help="Cuando alguien adelanta varias compras y luego se le transfiere el total, "
         "la app busca tickets anteriores al pago que sumen ese importe. 0 = no buscar.",
     )
+    if st.button("🗑️ Borrar lo guardado en este navegador",
+                 help="Todos los cuadres y lo que ha leído la IA. Después, los archivos se volverán a leer con la IA."):
+        almacen.borrar_todo()
+        empezar()
+        st.rerun()
 
-if st.button("Cuadrar gastos", type="primary"):
-    aviso = validar(extracto, comprobantes)
+if st.button("Añadir al cuadre" if activo else "Cuadrar gastos", type="primary"):
+    aviso = validar(extracto, comprobantes, editando=activo is not None)
     modelo = None if aviso else obtener_modelo()
     if aviso:
         st.warning(aviso)
@@ -426,21 +549,42 @@ if st.button("Cuadrar gastos", type="primary"):
         st.error("La app no está bien configurada (falta la clave). Avise a quien la mantiene.")
     else:
         barra = st.progress(0.0, text="Leyendo el extracto del banco…")
-        movimientos, error = leer_extracto(modelo, extracto)
-        if not error and not any(m["importe"] < 0 for m in movimientos):
-            error = "No se ha encontrado ningún gasto en el extracto. Compruebe que ha subido el archivo correcto."
-        if not error:
-            leidos, error = leer_comprobantes(modelo, comprobantes, barra)
+        error, nuevos = None, []
+        if extracto is None:  # editando sin extracto nuevo: se queda el que tenía
+            movimientos = activo["movimientos"]
+        else:
+            movimientos, error = leer_extracto_con_memoria(modelo, extracto)
+            if not error and not any(m["importe"] < 0 for m in movimientos):
+                error = "No se ha encontrado ningún gasto en el extracto. Compruebe que ha subido el archivo correcto."
+        if not error and comprobantes:
+            nuevos, error = leer_comprobantes_con_memoria(modelo, comprobantes, barra)
         barra.empty()
         if error:
             st.error(error)
         else:
-            # Se guardan también los archivos para poder enseñarlos al pulsar sobre ellos
-            st.session_state.resultado = (movimientos, leidos, {a["nombre"]: a for a in comprobantes})
+            id_cuadre = activo["id"] if activo else almacen.nuevo_id()
+            almacen.guardar_cuadre({
+                "id": id_cuadre,
+                "nombre": activo["nombre"] if activo else Path(extracto["nombre"]).stem,
+                "extracto": extracto["nombre"] if extracto else activo["extracto"],
+                "movimientos": movimientos,
+                "leidos": juntar_comprobantes(activo["leidos"] if activo else [], nuevos),
+                # Para encontrar el archivo de cada comprobante en el navegador
+                "huellas": {**(activo.get("huellas", {}) if activo else {}),
+                            **{a["nombre"]: almacen.huella("comprobante", a) for a in comprobantes}},
+            })
+            # Las fotos, reducidas (~300 KB); los PDF, tal cual
+            almacen.guardar_archivos({almacen.huella("comprobante", a): reducir_imagen(a) for a in comprobantes})
+            # Se guardan también los archivos de esta sesión para poder enseñarlos al pulsar sobre ellos
+            archivos = st.session_state.get("archivos", {}) if activo else {}
+            empezar(id_cuadre)
+            st.session_state.archivos = {**archivos, **{a["nombre"]: a for a in comprobantes}}
+            st.rerun()
 
-# El resultado se guarda para poder mover el ajuste de días sin volver a llamar a la IA
-if "resultado" in st.session_state:
-    movimientos, leidos, archivos = st.session_state.resultado
+# El cuadre abierto se recalcula en cada ejecución: mover el ajuste de días no vuelve a llamar a la IA
+if activo:
+    movimientos, leidos = activo["movimientos"], activo["leidos"]
+    archivos = st.session_state.get("archivos", {})
     gastos, resumen, sueltos = cuadrar(movimientos, leidos, tolerancia, ventana_reembolso)
 
     # Un reembolso agrupado ocupa varias filas: contamos movimientos por su n.º («Mov.»)
@@ -494,7 +638,7 @@ if "resultado" in st.session_state:
     # Se abre aquí (y no en la tabla) para que no vuelva a salir al mover un ajuste
     nombre = st.session_state.pop("abrir_comprobante", "")
     if nombre:
-        ver_comprobante(nombre, archivos, leidos, gastos)
+        ver_comprobante(nombre, archivos, leidos, gastos, activo.get("huellas", {}))
 
     st.download_button(
         "⬇️ Descargar en Excel (para la gestoría)",
@@ -508,3 +652,6 @@ st.caption(
     "La lectura de tickets y extractos la hace una inteligencia artificial y puede contener errores. "
     "Revise siempre los importes antes de enviarlos. Esta app no sustituye a su gestoría."
 )
+
+# Al final, para mandar al navegador lo que se haya guardado en esta ejecución
+almacen.sincronizar()

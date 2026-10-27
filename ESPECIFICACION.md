@@ -46,19 +46,22 @@ comprobable y siempre da el mismo resultado.
 Extras de usabilidad: botón "Probar con datos de ejemplo", ajustes de días de tolerancia (0–10, por
 defecto 4) y de ventana de reembolsos (0–90, por defecto 30; 0 = no buscar), pestaña "Lo que ha leído la IA" para revisar, aviso de privacidad, y ventana para **ver cada comprobante** al pulsar sobre su nombre (en *Todos los gastos* y en *Qué falta*), con lo que ha leído la IA y el gasto del banco con el que va.
 
+**Memoria en el navegador (IndexedDB, `almacen.py`):** lo que lee la IA se guarda en el navegador de quien usa la app, identificado por la huella (SHA-256) del contenido de cada archivo. Si se vuelve a subir un archivo ya leído (aunque cambie de nombre), se usa lo guardado y **no se llama a la IA**. También se guarda cada **cuadre** (extracto + comprobantes leídos) en un historial (F6) y los **archivos de los comprobantes** (fotos reducidas a ~300 KB, PDF tal cual) para verlos al abrir un cuadre. Los archivos viajan una vez en base64 hasta el navegador, se guardan como `Blob` (una sola vez aunque estén en varios cuadres) y **no vuelven al servidor**: los muestra un componente que los lee de IndexedDB. Al eliminar un cuadre o sustituir un ticket se borran los archivos que ya no usa ningún cuadre. Las lecturas ilegibles no se guardan (para que la IA lo intente de nuevo) y nada pasa por un servidor propio. Si cambian los prompts o los esquemas, se sube `VERSION_LECTURA` y lo leído antes deja de usarse. Se puede borrar en *Ajustes*.
+
 **Categorías fijas:** Alimentación · Restauración · Transporte y combustible · Suministros (luz,
 agua, gas) · Telecomunicaciones y software · Material y oficina · Salud · Impuestos y cuotas ·
 Compras online · Otros. Si la IA devuelve otra, se convierte en "Otros".
 
 ### 2.1 Estado de las funcionalidades
 
-**Implementadas: 3 / 5** · Verificadas: 0 / 5 · Última actualización: 2026-10-22
+**Implementadas: 4 / 6** · Verificadas: 0 / 6 · Última actualización: 2026-10-27
 
 | # | Funcionalidad | Estado | Dónde está | Criterios | Notas |
 |---|---|---|---|---|---|
 | F1 | Emparejar comprobantes con el extracto | ✅ Implementada | `cuadre.py`: `emparejar`, `agrupar_reembolsos`, `cuadrar` | CA1–CA3, CA7, CA13, CA15–CA17 | Reglas probadas en `tests/test_cuadre.py`; falta la prueba manual con la IA real |
 | F2 | Detectar lo que falta | ✅ Implementada | `app.py`: pestaña «⚠️ Qué falta» | CA4, CA5, CA10 | Reglas probadas en `tests/`; falta la prueba manual con la IA real |
 | F3 | Agrupar por categoría + Excel | ✅ Implementada | `cuadre.py` (agrupación), `app.py`: `a_excel`, pestaña «📊 Por categoría» | CA1, CA7 | Reglas probadas en `tests/`; falta la prueba manual con la IA real |
+| F6 | Historial de cuadres: abrir, ampliar con más comprobantes, renombrar, eliminar y empezar uno nuevo | ✅ Implementada | `almacen.py` (IndexedDB); `app.py`: barra lateral «Mis cuadres», `empezar`, `juntar_comprobantes` | CA19–CA22 | Probado en Chrome con los ejemplos (sin llamar a la IA) y en `tests/test_app.py` |
 | F4 | Enviar los gastos a un programa de contabilidad externo | 📝 Planeada | — | — | Anunciada en HITO_SEMANA2.md; sin especificar |
 | F5 | Responder preguntas sobre los gastos con un RAG | 📝 Planeada | — | — | Anunciada en HITO_SEMANA2.md; sin especificar |
 
@@ -67,14 +70,16 @@ Estados: 📝 Planeada · 🚧 En curso · ✅ Implementada (el código existe y
 
 ## 3. Interfaz (Streamlit, una página)
 
+0. **Barra lateral «🗂️ Mis cuadres»:** botón **➕ Nuevo cuadre** (página vacía) y la lista de cuadres guardados en el navegador, del más reciente al más antiguo, con su fecha y n.º de comprobantes. Al pulsar uno se abre.
 1. Título y una frase que explica qué hace.
-2. Desplegable "Cómo se usa y qué pasa con mis datos" (avisa de que los archivos van a Google y, si no responde, a Anthropic).
-3. Botón **🧪 Probar con datos de ejemplo**.
-4. Dos subidas de archivos en columnas: **Paso 1** extracto, **Paso 2** tickets y facturas.
-5. Desplegable **Ajustes**: días de tolerancia y ventana de reembolsos.
-6. Botón principal **Cuadrar gastos** con barra de progreso.
+2. Desplegable "Cómo se usa y qué pasa con mis datos" (avisa de que los archivos van a Google y, si no responde, a Anthropic, y de que lo leído se guarda solo en este navegador).
+   Debajo, el cuadre abierto (📂 nombre, extracto, n.º de comprobantes), un campo para **cambiarle el nombre** y **🗑️ Eliminar este cuadre**; o «Nuevo cuadre».
+3. Botón **🧪 Probar con datos de ejemplo** (empieza un cuadre nuevo).
+4. Dos subidas de archivos en columnas: **Paso 1** extracto, **Paso 2** tickets y facturas. Con un cuadre abierto, el extracto es opcional (solo para cambiarlo) y el paso 2 es «Más tickets y facturas»; tras guardar, las subidas se vacían.
+5. Desplegable **Ajustes**: días de tolerancia, ventana de reembolsos y botón **🗑️ Borrar lo guardado en este navegador**.
+6. Botón principal **Cuadrar gastos** (cuadre nuevo) o **Añadir al cuadre** (cuadre abierto: suma los comprobantes nuevos a los que tenía; si uno se llama igual, manda el nuevo) con barra de progreso. El resultado se guarda en el historial.
 7. Resultado: 4 cifras resumen + pestañas *Por categoría*, *Todos los gastos*, *Qué falta*, *Lo que ha leído la IA* + botón **Descargar en Excel**.
-8. Al pulsar sobre un comprobante en una tabla se abre una ventana con la foto o el PDF, un botón para descargarlo y, debajo, su detalle.
+8. Al pulsar sobre un comprobante en una tabla se abre una ventana con la foto o el PDF, un botón para descargarlo y, debajo, su detalle. Si el cuadre se abrió del historial, el archivo sale de IndexedDB.
 
 ## 4. Pieza de IA
 
@@ -89,7 +94,8 @@ Estados: 📝 Planeada · 🚧 En curso · ✅ Implementada (el código existe y
   funcionando. Pydantic AI permite usar los dos con el mismo código, esquemas y prompts.
 - **Cómo se ahorra cuota:** las fotos se reducen a 1600 px (~300 KB); se envían 5 comprobantes por
   llamada, así que 20 comprobantes son 1 + 4 = 5 llamadas. El resultado se guarda y mover el ajuste
-  de días no vuelve a llamar a la IA.
+  de días no vuelve a llamar a la IA. Lo leído se guarda en el navegador (IndexedDB): volver a subir los mismos
+  archivos, aunque sea otro día, no gasta cuota.
 - **Qué pasa si falla:**
 
 | Situación | Comportamiento |
@@ -109,7 +115,7 @@ Estados: 📝 Planeada · 🚧 En curso · ✅ Implementada (el código existe y
 Datos de prueba: `ejemplos/` (inventados, regenerables con `python ejemplos/generar_ejemplos.py`).
 
 **Pruebas automáticas** (`python -m unittest discover -s tests -v`, sin llamar a la IA): cubren
-CA1–CA13 y CA15–CA18 con lo que la IA *debería* leer de los ejemplos (`tests/datos_ejemplo.py`) y
+CA1–CA13 y CA15–CA22 con lo que la IA *debería* leer de los ejemplos (`tests/datos_ejemplo.py`) y
 modelos de IA falsos para los errores y el paso a Claude. Quedan para la prueba manual con la app: que la IA lea
 bien los ejemplos y CA14. Cada prueba lleva en su nombre el ID del criterio (`test_CA7_…`).
 GitHub las pasa solas en cada push y pull request (`.github/workflows/pruebas.yml`), sin claves.
@@ -133,6 +139,10 @@ GitHub las pasa solas en cada push y pull request (`.github/workflows/pruebas.ym
 | CA16 | Reembolso ambiguo | Pago de 30 € con tickets de 10, 20, 15 y 15 € | Se agrupa una combinación y aparece el aviso «revisar» |
 | CA17 | Sin búsqueda de reembolsos | Ventana = 0 con el ejemplo | La transferencia queda "Falta comprobante" y los 3 tickets como sueltos |
 | CA18 | Modelo de reserva | Las dos claves; Gemini sin cuota (o clave de Gemini falsa) | Lee con Claude sin esperar ni avisar; el resultado es el mismo |
+| CA19 | Archivos ya leídos | Cuadrar el ejemplo dos veces (o cambiar el nombre de un ticket y volver a subirlo) | La segunda vez no se llama a la IA para esos archivos; mismo resultado |
+| CA20 | Historial | Cuadrar el ejemplo, recargar la página y abrirlo en *Mis cuadres* | Aparece con su fecha; al abrirlo, el mismo resultado sin llamar a la IA. *Nuevo cuadre* deja la página vacía |
+| CA22 | Ver los archivos de un cuadre guardado | Cuadrar el ejemplo, recargar la página, abrir el cuadre y pulsar un ticket y un PDF | Se ven la foto y el PDF con su botón de descarga; al eliminar el cuadre se borran sus archivos (si ningún otro cuadre los usa) |
+| CA21 | Ampliar un cuadre | Cuadre con extracto + 3 tickets; abrirlo y subir 2 tickets más → «Añadir al cuadre» | El cuadre tiene 5 comprobantes y se recalcula; el extracto se mantiene; sin archivos nuevos → aviso |
 | CA14 | Usuario no técnico | Persona que no conoce la app | Con el ejemplo, entiende qué le falta en menos de 2 minutos sin ayuda |
 
 ## 6. Prompts reutilizables

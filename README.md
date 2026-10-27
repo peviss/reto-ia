@@ -38,6 +38,8 @@ La especificación completa está en [ESPECIFICACION.md](ESPECIFICACION.md). Res
 | CA12 | Cuota agotada en Gemini y en Claude | Un reintento y mensaje claro; la app no se rompe |
 | CA18 | Cuota de Gemini agotada, con clave de Anthropic | Lee con Claude sin esperar; mismo resultado |
 | CA16 | Reembolso con varias combinaciones posibles | Se agrupa una y aparece el aviso «revisar» |
+| CA19 | Volver a subir archivos ya leídos | No se llama a la IA: se usa lo guardado en el navegador |
+| CA21 | Abrir un cuadre del historial y añadirle tickets | Se suman a los que tenía y se recalcula |
 
 ## Cómo se usa
 
@@ -99,6 +101,7 @@ Para regenerar los datos de ejemplo: `python ejemplos/generar_ejemplos.py`.
 - En reembolsos, si varias combinaciones de tickets suman lo mismo, elige una y avisa para revisar.
 - No es contabilidad oficial ni decide qué es deducible.
 - Privacidad: los archivos se envían a Gemini; en la capa gratuita Google puede usarlos para mejorar sus servicios. Prueba con los datos de ejemplo.
+- El historial de cuadres, lo leído por la IA y las fotos y PDF de los comprobantes se guardan solo en tu navegador (IndexedDB); se borra en *Ajustes*. En otro navegador o en modo privado no está.
 
 ---
 

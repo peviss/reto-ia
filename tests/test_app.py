@@ -4,6 +4,7 @@ Ninguna prueba llama de verdad a la IA: los modelos se sustituyen por otros fals
 Ejecutar:  python -m unittest discover -s tests -v
 """
 
+import base64
 import logging
 import unittest
 from pathlib import Path
@@ -18,7 +19,9 @@ from streamlit.testing.v1 import AppTest
 
 # Importar app.py fuera de «streamlit run» avisa de que no hay sesión: lo silenciamos
 logging.getLogger("streamlit").setLevel(logging.ERROR)
+import almacen  # noqa: E402
 import app  # noqa: E402
+import datos_ejemplo  # noqa: E402
 
 RUTA_APP = str(Path(__file__).parent.parent / "app.py")
 
@@ -136,6 +139,124 @@ class ModeloDeReserva(unittest.TestCase):
             self.assertIsInstance(app.obtener_modelo(), FallbackModel)
 
 
+class LoGuardadoEnElNavegador(unittest.TestCase):
+    """Lo ya leído (guardado en IndexedDB) no se vuelve a mandar a la IA. Sin navegador:
+    lo que llegaría de IndexedDB se pone a mano en una session_state falsa (un dict)."""
+
+    def setUp(self):
+        self.estado = {"guardado": {"lecturas": {}, "cuadres": {}}}
+        parche = mock.patch.object(app.st, "session_state", self.estado)
+        parche.start()
+        self.addCleanup(parche.stop)
+
+    def test_huella_por_contenido(self):
+        a, b = archivo("a.jpg"), {**archivo("otro_nombre.jpg")}
+        self.assertEqual(almacen.huella("comprobante", a), almacen.huella("comprobante", b))
+        self.assertNotEqual(almacen.huella("comprobante", a), almacen.huella("extracto", a))
+        self.assertNotEqual(almacen.huella("comprobante", a), almacen.huella("comprobante", archivo("a.jpg", megas=0.02)))
+
+    def test_CA19_extracto_ya_leido_no_llama_a_la_ia(self):
+        extracto = archivo("e.csv")
+        movimientos = [{"fecha": "2025-10-01", "concepto": "X", "importe": -5.0, "categoria": "Otros"}]
+        self.estado["guardado"]["lecturas"][almacen.huella("extracto", extracto)] = movimientos
+        modelo = ModeloFalso()
+        self.assertEqual(app.leer_extracto_con_memoria(modelo, extracto), (movimientos, None))
+        self.assertEqual(modelo.llamadas, 0)
+
+    def test_CA19_solo_se_leen_los_comprobantes_nuevos(self):
+        viejo, nuevo = archivo("renombrado.jpg"), {**archivo("t.jpg", megas=0.02)}
+        guardado = {"archivo": "viejo.jpg", "comercio": "Tienda Guardada", "fecha": "2025-10-02",
+                    "total": 3.0, "categoria": "Otros", "legible": True}
+        self.estado["guardado"]["lecturas"][almacen.huella("comprobante", viejo)] = guardado
+        modelo = ModeloFalso()  # responde con el comprobante «t.jpg»
+        leidos, error = app.leer_comprobantes_con_memoria(modelo, [viejo, nuevo], mock.Mock())
+        self.assertIsNone(error)
+        self.assertEqual(modelo.llamadas, 1)
+        self.assertEqual([c["archivo"] for c in leidos], ["renombrado.jpg", "t.jpg"])  # con el nombre de ahora
+        # El nuevo queda pendiente de guardar en el navegador y ya se usa en esta sesión
+        clave = almacen.huella("comprobante", nuevo)
+        self.assertIn(clave, self.estado["orden_nueva"]["lecturas"])
+        self.assertIn(clave, self.estado["guardado"]["lecturas"])
+
+    def test_ilegibles_no_se_guardan(self):
+        ilegible = {"archivo": "t.jpg", "comercio": "", "fecha": "", "total": 0.0, "categoria": "Otros", "legible": False}
+        with mock.patch.object(app, "leer_comprobantes", return_value=([ilegible], None)):
+            app.leer_comprobantes_con_memoria(None, [archivo("t.jpg")], mock.Mock())
+        self.assertNotIn("orden_nueva", self.estado)
+
+    def test_borrar_todo(self):
+        almacen.guardar_lecturas({"x": [1]})
+        almacen.borrar_todo()
+        self.assertEqual(self.estado["guardado"], {"lecturas": {}, "cuadres": {}})
+        self.assertEqual(self.estado["orden_nueva"], {**almacen._orden_vacia(), "borrar": True})
+
+    def test_CA22_archivos_en_base64_y_sin_huerfanos(self):
+        foto = archivo("t.jpg")
+        clave = almacen.huella("comprobante", foto)
+        almacen.guardar_archivos({clave: foto})
+        self.assertEqual(base64.b64decode(self.estado["orden_nueva"]["archivos"][clave]["b64"]), foto["datos"])
+        # Dos cuadres comparten el ticket: al eliminar uno, el archivo se queda; al eliminar el otro, se borra
+        almacen.guardar_cuadre({"id": "a", "nombre": "A", "huellas": {"t.jpg": clave}})
+        almacen.guardar_cuadre({"id": "b", "nombre": "B", "huellas": {"otro_nombre.jpg": clave}})
+        almacen.eliminar_cuadre("a")
+        self.assertEqual(self.estado["orden_nueva"]["quitar_archivos"], [])
+        almacen.eliminar_cuadre("b")
+        self.assertEqual(self.estado["orden_nueva"]["quitar_archivos"], [clave])
+        self.assertNotIn(clave, self.estado["orden_nueva"]["archivos"])  # ya no se manda
+
+    def test_ticket_sustituido_se_borra(self):
+        almacen.guardar_cuadre({"id": "a", "nombre": "A", "huellas": {"t.jpg": "vieja"}})
+        almacen.guardar_cuadre({"id": "a", "nombre": "A", "huellas": {"t.jpg": "nueva"}})
+        self.assertEqual(self.estado["orden_nueva"]["quitar_archivos"], ["vieja"])
+
+    def test_orden_sin_confirmar_se_junta_con_la_nueva(self):
+        with mock.patch.object(almacen, "_componente") as componente:
+            almacen.guardar_lecturas({"x": [1]})
+            almacen.sincronizar()
+            primera = self.estado["orden_enviada"]
+            almacen.guardar_lecturas({"y": [2]})  # el navegador aún no ha confirmado la primera
+            almacen.sincronizar()
+            self.assertEqual(set(self.estado["orden_enviada"]["lecturas"]), {"x", "y"})
+            # El navegador confirma: deja de mandarse
+            self.estado["almacen"] = mock.Mock(hecha=self.estado["orden_enviada"]["id"])
+            almacen._al_hacerse()
+            self.assertNotIn("orden_enviada", self.estado)
+            self.assertNotEqual(primera["id"], componente.call_args.kwargs["data"]["orden"]["id"])
+
+    def test_CA20_historial_del_mas_reciente_al_mas_antiguo(self):
+        with mock.patch.object(almacen.time, "time", side_effect=[1, 2, 3]):
+            for nombre in ["septiembre", "octubre", "noviembre"]:
+                almacen.guardar_cuadre({"id": nombre, "nombre": nombre})
+        self.assertEqual([c["nombre"] for c in almacen.cuadres()], ["noviembre", "octubre", "septiembre"])
+        almacen.eliminar_cuadre("octubre")
+        self.assertEqual([c["nombre"] for c in almacen.cuadres()], ["noviembre", "septiembre"])
+        self.assertEqual(self.estado["orden_nueva"]["quitar"], ["octubre"])
+        self.assertNotIn("octubre", self.estado["orden_nueva"]["cuadres"])
+
+    def test_cuadre_de_la_version_anterior_aparece_en_el_historial(self):
+        # Antes se guardaba un solo cuadre con la clave «ultimo», sin id ni nombre
+        anterior = {"extracto": "e.csv", "movimientos": [], "leidos": [], "fecha": "1/10/26, 9:00"}
+        self.estado["almacen"] = mock.Mock(guardado={"lecturas": {}, "cuadres": {"ultimo": anterior}})
+        almacen._al_cargar()
+        self.assertEqual(almacen.cuadre("ultimo")["nombre"], "e.csv")
+        self.assertTrue(almacen.cargado())
+
+
+class EditarUnCuadre(unittest.TestCase):
+
+    def test_CA21_se_suman_los_comprobantes_nuevos(self):
+        anteriores = [{"archivo": "a.jpg", "total": 1.0}, {"archivo": "b.jpg", "total": 2.0}]
+        nuevos = [{"archivo": "b.jpg", "total": 5.0}, {"archivo": "c.jpg", "total": 3.0}]
+        juntos = app.juntar_comprobantes(anteriores, nuevos)
+        self.assertEqual([(c["archivo"], c["total"]) for c in juntos], [("a.jpg", 1.0), ("b.jpg", 5.0), ("c.jpg", 3.0)])
+
+    def test_CA21_validar_al_editar(self):
+        self.assertIn("Suba más tickets", app.validar(None, [], editando=True))
+        self.assertIsNone(app.validar(None, [archivo("t.jpg")], editando=True))  # el extracto ya lo tiene
+        self.assertIsNone(app.validar(archivo("e.csv"), [], editando=True))  # cambiar solo el extracto
+        self.assertIn("máximo es 20", app.validar(None, [archivo(f"t{i}.jpg") for i in range(21)], editando=True))
+
+
 class Interfaz(unittest.TestCase):
     """Ejecuta app.py con AppTest, sin navegador y con secretos vacíos."""
 
@@ -154,6 +275,26 @@ class Interfaz(unittest.TestCase):
 
     def boton(self, texto):
         return next(b for b in self.at.button if texto in b.label)
+
+    def test_CA20_abrir_un_cuadre_del_historial(self):
+        # Lo que mandaría el navegador desde IndexedDB: el cuadre del ejemplo bien leído
+        cuadre = {"id": "c1", "nombre": "Octubre", "extracto": "extracto_octubre.csv", "fecha": "31/10/26, 10:00",
+                  "actualizado": 1, "movimientos": datos_ejemplo.MOVIMIENTOS, "leidos": datos_ejemplo.COMPROBANTES}
+        self.at.session_state["guardado"] = {"lecturas": {}, "cuadres": {"c1": cuadre}}
+        self.at.session_state["guardado_cargado"] = True
+        self.at.run()
+        self.boton("Octubre").click().run()
+        self.assertFalse(self.at.exception)
+        self.assertEqual(self.at.subheader[0].value, "📂 Octubre")
+        self.assertEqual(self.at.metric[0].value, "10")  # CA1: 10 gastos
+        self.assertEqual(self.at.metric[1].value, "7")
+        # Editar sin subir nada nuevo: aviso, sin llamar a la IA
+        self.boton("Añadir al cuadre").click().run()
+        self.assertIn("Suba más tickets", self.at.warning[0].value)
+        # Nuevo cuadre: vuelve a la página vacía
+        self.boton("Nuevo cuadre").click().run()
+        self.assertEqual(self.at.subheader[0].value, "Nuevo cuadre")
+        self.assertFalse(self.at.metric)
 
     def test_arranca_sin_errores(self):
         self.assertFalse(self.at.exception)

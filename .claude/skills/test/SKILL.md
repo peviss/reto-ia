@@ -48,6 +48,10 @@ qué CA afecta y la causa probable.
 | CA11 | `test_app.py` (`AppTest` sin clave) | — |
 | CA12 | `test_app.py` (429 dos veces → un reintento y mensaje) | — |
 | CA18 | `test_app.py` (Gemini falso sin cuota → responde el Claude falso, sin esperar) | Con las dos claves y una clave de Gemini falsa, «Cuadrar gastos» con el ejemplo |
+| CA19 | `test_app.py` (lo guardado no se manda a la IA; solo los comprobantes nuevos) | Cuadrar el ejemplo dos veces: en la consola, «ya se había leído» |
+| CA20 | `test_app.py` (orden del historial; `AppTest` abre un cuadre guardado y «Nuevo cuadre») | Cuadrar el ejemplo, recargar la página y abrirlo en *Mis cuadres* |
+| CA22 | `test_app.py` (base64, archivos compartidos y huérfanos, orden confirmada) | Recargar, abrir un cuadre y pulsar un ticket y un PDF |
+| CA21 | `test_app.py` (`juntar_comprobantes` y `validar` al editar) | Abrir un cuadre, subir 2 tickets más y pulsar «Añadir al cuadre» |
 | CA14 | — | Una persona que no conoce la app, con el ejemplo, < 2 min |
 
 Las pruebas automáticas comprueban las **reglas**; que la **IA lea bien** los archivos solo se ve

@@ -17,6 +17,7 @@ texto visible: en español, trato de "usted", sin jerga informática ni contable
 | Archivo | Qué hace | Reglas |
 |---|---|---|
 | `app.py` | Interfaz + llamadas a la IA (Gemini, con Claude de reserva) para **leer** documentos | La IA solo extrae datos con esquema JSON (Pydantic). Nunca decide emparejamientos. |
+| `almacen.py` | Guarda en el navegador (IndexedDB) lo leído por la IA, el historial de cuadres y los archivos de los comprobantes, con un componente `st.components.v2` | Los archivos no vuelven nunca a Python: los muestra el visor desde IndexedDB. Si cambias un prompt o un esquema, sube `VERSION_LECTURA`. |
 | `cuadre.py` | **Empareja** (uno a uno y reembolsos agrupados) y **agrupa** con reglas fijas | Python puro, sin IA ni Streamlit, para poder probarlo y explicarlo. |
 | `ejemplos/` | Datos inventados + `generar_ejemplos.py` | Si añades un caso, regenera y actualiza ESPECIFICACION §5. |
 
@@ -56,7 +57,7 @@ cp .streamlit/secrets.toml.example .streamlit/secrets.toml   # pegar claves
 streamlit run app.py          # → "Probar con datos de ejemplo" → "Cuadrar gastos"
 ```
 
-Después, recorrer los criterios de aceptación CA1–CA18 de `ESPECIFICACION.md` que no cubren las
+Después, recorrer los criterios de aceptación CA1–CA22 de `ESPECIFICACION.md` que no cubren las
 pruebas automáticas. En Claude Code lo guía la skill `/test`.
 
 ## Al terminar una tarea

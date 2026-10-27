@@ -12,6 +12,7 @@ import io
 import logging
 import os
 import time
+from dataclasses import replace
 from pathlib import Path
 from typing import Literal
 
@@ -27,6 +28,7 @@ from pydantic_ai.exceptions import (
     ModelQuotaExceededError, ModelRateLimitError, ModelServerError, ModelUnavailableError,
     UnexpectedModelBehavior,
 )
+from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequest
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.google import GoogleModel
@@ -361,6 +363,7 @@ def conversar(modelo, pregunta, turnos, gastos, datos):
     La IA entiende la pregunta y redacta; los totales los calcula Python con la herramienta sumar_gastos.
     Devuelve (turno, mensaje_de_error): el turno lleva la pregunta, la respuesta, las consultas hechas
     (para enseñar qué gastos se han sumado) y los mensajes para recordárselos a la IA la próxima vez.
+    Todo en un formato que se puede pasar a JSON, para guardarlo en el navegador.
     """
     consultas = []
     agente = Agent(modelo, instructions=f"{PROMPT_CONVERSACION}\n# Datos del cuadre\n\n{datos}",
@@ -385,7 +388,8 @@ def conversar(modelo, pregunta, turnos, gastos, datos):
         return resultado
 
     # Solo las últimas preguntas, para no gastar cuota de más
-    historial = [m for turno in turnos[-TURNOS_RECORDADOS:] for m in turno["mensajes"]]
+    historial = ModelMessagesTypeAdapter.validate_python(
+        [m for turno in turnos[-TURNOS_RECORDADOS:] for m in turno["mensajes"]])
     for intento in range(2):
         try:
             respuesta = agente.run_sync(pregunta, message_history=historial)
@@ -407,8 +411,10 @@ def conversar(modelo, pregunta, turnos, gastos, datos):
 
     log.info("Conversación: respondido con %s (tokens: %s entrada, %s salida)", respuesta.response.model_name,
              respuesta.usage.input_tokens, respuesta.usage.output_tokens)
+    # Sin las instrucciones (llevan todos los datos del cuadre): en cada pregunta se mandan las de ahora
+    mensajes = [replace(m, instructions=None) if isinstance(m, ModelRequest) else m for m in respuesta.new_messages()]
     return {"pregunta": pregunta, "respuesta": respuesta.output, "consultas": consultas,
-            "mensajes": respuesta.new_messages()}, None
+            "mensajes": ModelMessagesTypeAdapter.dump_python(mensajes, mode="json")}, None
 
 
 def validar(extracto, comprobantes, editando=False):
@@ -535,7 +541,7 @@ with st.expander("ℹ️ Cómo se usa y qué pasa con mis datos"):
         "⚠️ **Privacidad:** los archivos se envían a la IA de Google (Gemini) para leerlos y, "
         "si no responde, a la de Anthropic (Claude). En la versión gratuita, Google puede usarlos para mejorar sus servicios. "
         "**Para probar, use los datos de ejemplo**; con datos reales, tape antes el número de cuenta y su DNI.\n\n"
-        "💾 **Qué se guarda:** cada cuadre, lo que ha leído la IA y las fotos y PDF de los comprobantes se guardan "
+        "💾 **Qué se guarda:** cada cuadre, lo que ha leído la IA, las fotos y PDF de los comprobantes y sus preguntas en «Pregunte» se guardan "
         "**solo en este navegador** (no en nuestro servidor). Si el ordenador es compartido, elimine sus cuadres al terminar. "
         "En la barra lateral, **Mis cuadres**, puede abrir uno, añadirle más tickets o empezar uno nuevo. "
         "Los archivos ya leídos no se vuelven a mandar a la IA. Puede borrarlo todo en ⚙️ Ajustes."
@@ -550,7 +556,7 @@ def empezar(id_cuadre=None):
     st.session_state.cuadre_activo = id_cuadre
     st.session_state.archivos = {}  # los archivos subidos son de otro cuadre
     st.session_state.ejemplo = False
-    st.session_state.conversacion = []  # las preguntas eran sobre otro cuadre (o sobre otros datos)
+    st.session_state.conversacion = almacen.conversacion(id_cuadre)  # la de este cuadre, si se guardó
     st.session_state.subida = st.session_state.get("subida", 0) + 1  # vacía las subidas de archivos
 
 
@@ -744,6 +750,7 @@ if activo:
         turnos = st.session_state.setdefault("conversacion", [])
         if turnos and st.button("🗑️ Borrar la conversación"):
             turnos.clear()
+            almacen.guardar_conversacion(activo["id"], [])
         # Como en cualquier chat: las preguntas y respuestas arriba y el campo para escribir siempre debajo
         chat = st.container(height=500)
         pregunta = st.chat_input("Escriba su pregunta…")
@@ -764,6 +771,7 @@ if activo:
                         st.error(error)
                     else:
                         turnos.append(turno)
+                        almacen.guardar_conversacion(activo["id"], turnos)
                         mostrar_respuesta(turno)
 
     # Se abre aquí (y no en la tabla) para que no vuelva a salir al mover un ajuste

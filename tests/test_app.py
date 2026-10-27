@@ -5,6 +5,7 @@ Ejecutar:  python -m unittest discover -s tests -v
 """
 
 import base64
+import json
 import logging
 import unittest
 from pathlib import Path
@@ -149,6 +150,15 @@ class Conversacion(unittest.TestCase):
         self.assertEqual(modelo.vistos[-1], ["¿Cuánto en restauración?", "¿Y cuáles no tienen ticket?"])
         self.assertEqual(segundo["consultas"][0]["numero_de_gastos"], 3)
 
+    def test_CA26_el_turno_se_puede_guardar_sin_los_datos_del_cuadre(self):
+        turno, _ = self.preguntar(ModeloQueConsulta({"categoria": "Restauración"}), "¿Cuánto en restauración?")
+        texto = json.dumps(turno)  # IndexedDB guarda lo que se puede pasar a JSON
+        self.assertNotIn("CAFETERIA LA PLAZA,", texto)  # las instrucciones (con el CSV) no se guardan
+        # Lo guardado vuelve a servir de historial en la siguiente pregunta
+        modelo = ModeloQueConsulta({"justificante": "sin"})
+        self.preguntar(modelo, "¿Y sin ticket?", [json.loads(texto)])
+        self.assertEqual(modelo.vistos[-1], ["¿Cuánto en restauración?", "¿Y sin ticket?"])
+
     def test_cuota_agotada_reintenta_una_vez(self):
         modelo = ModeloFalso(error_api(429), error_api(429))
         turno, error = self.preguntar(modelo, "hola")
@@ -240,7 +250,7 @@ class LoGuardadoEnElNavegador(unittest.TestCase):
     def test_borrar_todo(self):
         almacen.guardar_lecturas({"x": [1]})
         almacen.borrar_todo()
-        self.assertEqual(self.estado["guardado"], {"lecturas": {}, "cuadres": {}})
+        self.assertEqual(self.estado["guardado"], {"lecturas": {}, "cuadres": {}, "conversaciones": {}})
         self.assertEqual(self.estado["orden_nueva"], {**almacen._orden_vacia(), "borrar": True})
 
     def test_CA22_archivos_en_base64_y_sin_huerfanos(self):
@@ -285,6 +295,33 @@ class LoGuardadoEnElNavegador(unittest.TestCase):
         self.assertEqual([c["nombre"] for c in almacen.cuadres()], ["noviembre", "septiembre"])
         self.assertEqual(self.estado["orden_nueva"]["quitar"], ["octubre"])
         self.assertNotIn("octubre", self.estado["orden_nueva"]["cuadres"])
+
+    def test_CA26_conversaciones_por_cuadre(self):
+        turno = {"pregunta": "p", "respuesta": "r", "consultas": [], "mensajes": []}
+        almacen.guardar_cuadre({"id": "a", "nombre": "A"})
+        almacen.guardar_conversacion("a", [turno])
+        self.assertEqual(almacen.conversacion("a"), [turno])
+        self.assertEqual(almacen.conversacion("otro"), [])
+        self.assertEqual(self.estado["orden_nueva"]["conversaciones"], {"a": [turno]})
+        # Preguntar no cambia el cuadre (ni su fecha en el historial)
+        self.assertNotIn("conversacion", almacen.cuadre("a"))
+        # Al eliminar el cuadre se va su conversación y no se vuelve a mandar
+        almacen.eliminar_cuadre("a")
+        self.assertEqual(almacen.conversacion("a"), [])
+        self.assertEqual(self.estado["orden_nueva"]["conversaciones"], {})
+        self.assertEqual(self.estado["orden_nueva"]["quitar"], ["a"])
+
+    def test_CA26_borrar_la_conversacion(self):
+        almacen.guardar_conversacion("a", [{"pregunta": "p"}])
+        almacen.guardar_conversacion("a", [])
+        self.assertEqual(almacen.conversacion("a"), [])
+        self.assertEqual(self.estado["orden_nueva"]["conversaciones"], {"a": []})  # el navegador la borra
+
+    def test_CA26_al_cargar_llegan_las_conversaciones(self):
+        self.estado["almacen"] = mock.Mock(guardado={"lecturas": {}, "cuadres": {},
+                                                     "conversaciones": {"a": [{"pregunta": "p"}]}})
+        almacen._al_cargar()
+        self.assertEqual(almacen.conversacion("a"), [{"pregunta": "p"}])
 
     def test_cuadre_de_la_version_anterior_aparece_en_el_historial(self):
         # Antes se guardaba un solo cuadre con la clave «ultimo», sin id ni nombre
@@ -359,10 +396,21 @@ class Interfaz(unittest.TestCase):
         self.at.chat_input[0].set_value("¿Cuánto he gastado?").run()
         self.assertFalse(self.at.exception)
         self.assertIn("falta la clave", self.at.error[0].value)
-        # Al cambiar de cuadre, la conversación empieza de cero
+        # Un cuadre nuevo empieza sin conversación
         self.at.session_state["conversacion"] = [{"pregunta": "p", "respuesta": "r", "consultas": [], "mensajes": []}]
         self.boton("Nuevo cuadre").click().run()
         self.assertEqual(self.at.session_state["conversacion"], [])
+
+    def test_CA26_al_abrir_un_cuadre_sale_su_conversacion(self):
+        cuadre = {"id": "c1", "nombre": "Octubre", "extracto": "extracto_octubre.csv", "fecha": "31/10/26, 10:00",
+                  "actualizado": 1, "movimientos": datos_ejemplo.MOVIMIENTOS, "leidos": datos_ejemplo.COMPROBANTES}
+        turno = {"pregunta": "¿Cuánto en restauración?", "respuesta": "25,60 €", "consultas": [], "mensajes": []}
+        self.at.session_state["guardado"] = {"lecturas": {}, "cuadres": {"c1": cuadre}, "conversaciones": {"c1": [turno]}}
+        self.at.session_state["guardado_cargado"] = True
+        self.at.run()
+        self.boton("Octubre").click().run()
+        self.assertFalse(self.at.exception)
+        self.assertEqual([m.markdown[0].value for m in self.at.chat_message], ["¿Cuánto en restauración?", "25,60 €"])
 
     def test_arranca_sin_errores(self):
         self.assertFalse(self.at.exception)

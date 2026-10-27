@@ -1,10 +1,12 @@
-"""Guarda en el navegador del usuario (IndexedDB) lo que ha leído la IA, el historial de cuadres
-y los archivos de los comprobantes.
+"""Guarda en el navegador del usuario (IndexedDB) lo que ha leído la IA, el historial de cuadres,
+los archivos de los comprobantes y las conversaciones sobre cada cuadre.
 
 - Si se vuelve a subir un archivo ya leído, se usa lo guardado y no se gasta cuota de la IA.
 - Cada cuadre (extracto + comprobantes leídos) se guarda para abrirlo, ampliarlo con más
   comprobantes o eliminarlo más tarde desde la barra lateral.
 - Las fotos (reducidas) y los PDF de los comprobantes se guardan para verlos al abrir un cuadre.
+- Las preguntas y respuestas de la pestaña «Pregunte» se guardan aparte, con el id de su cuadre,
+  para que preguntar no cambie la fecha ni el orden del cuadre en el historial.
 
 Todo se queda en el navegador de quien usa la app: no pasa por ningún servidor nuestro.
 
@@ -44,11 +46,11 @@ function pedir(peticion) {
 }
 
 function abrir() {
-    const peticion = indexedDB.open(BD, 2);
+    const peticion = indexedDB.open(BD, 3);
     peticion.onupgradeneeded = () => {
         const bd = peticion.result;
-        // lecturas y archivos: clave = huella del archivo; cuadres: clave = id del cuadre
-        for (const almacen of ["lecturas", "cuadres", "archivos"]) {
+        // lecturas y archivos: clave = huella del archivo; cuadres y conversaciones: clave = id del cuadre
+        for (const almacen of ["lecturas", "cuadres", "archivos", "conversaciones"]) {
             if (!bd.objectStoreNames.contains(almacen)) bd.createObjectStore(almacen);
         }
     };
@@ -64,18 +66,27 @@ function aBlob(archivo) {
 }
 
 async function ejecutar(bd, orden) {
-    const tx = bd.transaction(["lecturas", "cuadres", "archivos"], "readwrite");
+    const tx = bd.transaction(["lecturas", "cuadres", "archivos", "conversaciones"], "readwrite");
     const fin = new Promise((ok, mal) => { tx.oncomplete = ok; tx.onerror = tx.onabort = () => mal(tx.error); });
     const lecturas = tx.objectStore("lecturas"), cuadres = tx.objectStore("cuadres"), archivos = tx.objectStore("archivos");
+    const conversaciones = tx.objectStore("conversaciones");
     if (orden.borrar) {
         lecturas.clear();
         cuadres.clear();
         archivos.clear();
+        conversaciones.clear();
     }
-    for (const id of orden.quitar || []) cuadres.delete(id);
+    for (const id of orden.quitar || []) {  // un cuadre eliminado se lleva su conversación
+        cuadres.delete(id);
+        conversaciones.delete(id);
+    }
     for (const clave of orden.quitar_archivos || []) archivos.delete(clave);
     for (const [clave, datos] of Object.entries(orden.lecturas || {})) lecturas.put(datos, clave);
     for (const [clave, archivo] of Object.entries(orden.archivos || {})) archivos.put(aBlob(archivo), clave);
+    // Una conversación vacía se borra
+    for (const [id, turnos] of Object.entries(orden.conversaciones || {})) {
+        if (turnos.length) conversaciones.put(turnos, id); else conversaciones.delete(id);
+    }
     // La fecha la pone el navegador, con la hora de quien usa la app
     const fecha = new Date().toLocaleString("es-ES", { dateStyle: "short", timeStyle: "short" });
     for (const [id, cuadre] of Object.entries(orden.cuadres || {})) {
@@ -95,9 +106,10 @@ async function todo(tx, almacen) {
 
 // Los archivos no se mandan: se quedan en el navegador
 async function leerTodo(bd) {
-    const tx = bd.transaction(["lecturas", "cuadres"]);
-    const [lecturas, cuadres] = await Promise.all([todo(tx, "lecturas"), todo(tx, "cuadres")]);
-    return { lecturas, cuadres };
+    const tx = bd.transaction(["lecturas", "cuadres", "conversaciones"]);
+    const [lecturas, cuadres, conversaciones] = await Promise.all(
+        [todo(tx, "lecturas"), todo(tx, "cuadres"), todo(tx, "conversaciones")]);
+    return { lecturas, cuadres, conversaciones };
 }
 
 export default function ({ data, setStateValue, setTriggerValue }) {
@@ -188,7 +200,8 @@ def huella(tipo, archivo):
 def _guardado():
     """La copia de esta sesión de lo guardado en el navegador."""
     if "guardado" not in st.session_state:
-        st.session_state["guardado"] = {"lecturas": {}, "cuadres": {}}
+        st.session_state["guardado"] = {"lecturas": {}, "cuadres": {}, "conversaciones": {}}
+    st.session_state["guardado"].setdefault("conversaciones", {})
     return st.session_state["guardado"]
 
 
@@ -210,6 +223,11 @@ def cuadre(id_cuadre):
     return _guardado()["cuadres"].get(id_cuadre) if id_cuadre else None
 
 
+def conversacion(id_cuadre):
+    """Las preguntas y respuestas guardadas de un cuadre (una copia: la lista se puede ampliar)."""
+    return list(_guardado()["conversaciones"].get(id_cuadre, [])) if id_cuadre else []
+
+
 def nuevo_id():
     return uuid.uuid4().hex
 
@@ -217,7 +235,8 @@ def nuevo_id():
 # ---------- Órdenes para el navegador ----------
 
 def _orden_vacia():
-    return {"lecturas": {}, "cuadres": {}, "archivos": {}, "quitar": [], "quitar_archivos": [], "borrar": False}
+    return {"lecturas": {}, "cuadres": {}, "archivos": {}, "conversaciones": {},
+            "quitar": [], "quitar_archivos": [], "borrar": False}
 
 
 def _juntar(antes, despues):
@@ -231,6 +250,9 @@ def _juntar(antes, despues):
     junta["cuadres"].update(despues["cuadres"])
     junta["archivos"] = {h: a for h, a in antes["archivos"].items() if h not in despues["quitar_archivos"]}
     junta["archivos"].update(despues["archivos"])
+    # Al quitar un cuadre se quita su conversación: no hay que volver a guardar la de antes
+    junta["conversaciones"] = {i: c for i, c in antes["conversaciones"].items() if i not in despues["quitar"]}
+    junta["conversaciones"].update(despues["conversaciones"])
     # El navegador quita antes de guardar: así lo que se vuelve a guardar después no se pierde
     junta["quitar"] = [i for i in antes["quitar"] + despues["quitar"] if i not in despues["cuadres"]]
     junta["quitar_archivos"] = [h for h in antes["quitar_archivos"] + despues["quitar_archivos"]
@@ -278,15 +300,29 @@ def guardar_cuadre(datos):
     _guardado()["cuadres"][datos["id"]] = datos
 
 
+def guardar_conversacion(id_cuadre, turnos):
+    """Guarda las preguntas y respuestas de un cuadre (todas: sustituyen a las de antes). Vacía = se borra.
+
+    Cada turno debe poder pasarse a JSON (los mensajes de la IA, con ModelMessagesTypeAdapter).
+    """
+    turnos = list(turnos)
+    _ordenar(conversaciones={id_cuadre: turnos})
+    if turnos:
+        _guardado()["conversaciones"][id_cuadre] = turnos
+    else:
+        _guardado()["conversaciones"].pop(id_cuadre, None)
+
+
 def eliminar_cuadre(id_cuadre):
     sobran = set((cuadre(id_cuadre) or {}).get("huellas", {}).values()) - _en_uso(id_cuadre)
     _ordenar(quitar=[id_cuadre], quitar_archivos=sorted(sobran))
     _guardado()["cuadres"].pop(id_cuadre, None)
+    _guardado()["conversaciones"].pop(id_cuadre, None)
 
 
 def borrar_todo():
     _ordenar(borrar=True)
-    st.session_state["guardado"] = {"lecturas": {}, "cuadres": {}}
+    st.session_state["guardado"] = {"lecturas": {}, "cuadres": {}, "conversaciones": {}}
 
 
 def ver_archivo(clave, nombre):
@@ -310,6 +346,7 @@ def _al_cargar():
     st.session_state["guardado"] = {
         "lecturas": {**(recibido.get("lecturas") or {}), **local["lecturas"]},
         "cuadres": {**cuadres_recibidos, **local["cuadres"]},
+        "conversaciones": {**(recibido.get("conversaciones") or {}), **local["conversaciones"]},
     }
     st.session_state["guardado_cargado"] = True
     log.info("Guardado en el navegador: %d lecturas y %d cuadres",

@@ -48,7 +48,7 @@ comprobable y siempre da el mismo resultado.
 Extras de usabilidad: botón "Probar con datos de ejemplo", ajustes de días de tolerancia (0–10, por
 defecto 4) y de ventana de reembolsos (0–90, por defecto 30; 0 = no buscar), pestaña "Lo que ha leído la IA" para revisar, aviso de privacidad, y ventana para **ver cada comprobante** al pulsar sobre su nombre (en *Todos los gastos* y en *Qué falta*), con lo que ha leído la IA y el gasto del banco con el que va.
 
-**Memoria en el navegador (IndexedDB, `almacen.py`):** lo que lee la IA se guarda en el navegador de quien usa la app, identificado por la huella (SHA-256) del contenido de cada archivo. Si se vuelve a subir un archivo ya leído (aunque cambie de nombre), se usa lo guardado y **no se llama a la IA**. También se guarda cada **cuadre** (extracto + comprobantes leídos) en un historial (F6) y los **archivos de los comprobantes** (fotos reducidas a ~300 KB, PDF tal cual) para verlos al abrir un cuadre. Los archivos viajan una vez en base64 hasta el navegador, se guardan como `Blob` (una sola vez aunque estén en varios cuadres) y **no vuelven al servidor**: los muestra un componente que los lee de IndexedDB. Al eliminar un cuadre o sustituir un ticket se borran los archivos que ya no usa ningún cuadre. Las lecturas ilegibles no se guardan (para que la IA lo intente de nuevo) y nada pasa por un servidor propio. Si cambian los prompts o los esquemas, se sube `VERSION_LECTURA` y lo leído antes deja de usarse. Se puede borrar en *Ajustes*.
+**Memoria en el navegador (IndexedDB, `almacen.py`):** lo que lee la IA se guarda en el navegador de quien usa la app, identificado por la huella (SHA-256) del contenido de cada archivo. Si se vuelve a subir un archivo ya leído (aunque cambie de nombre), se usa lo guardado y **no se llama a la IA**. También se guarda cada **cuadre** (extracto + comprobantes leídos) en un historial (F6) y los **archivos de los comprobantes** (fotos reducidas a ~300 KB, PDF tal cual) para verlos al abrir un cuadre. Los archivos viajan una vez en base64 hasta el navegador, se guardan como `Blob` (una sola vez aunque estén en varios cuadres) y **no vuelven al servidor**: los muestra un componente que los lee de IndexedDB. Al eliminar un cuadre o sustituir un ticket se borran los archivos que ya no usa ningún cuadre. Las **conversaciones** de *Pregunte* (F5) se guardan aparte, una por cuadre (para que preguntar no cambie su fecha en el historial), sin los datos del cuadre que van en las instrucciones; se borran con su cuadre. Las lecturas ilegibles no se guardan (para que la IA lo intente de nuevo) y nada pasa por un servidor propio. Si cambian los prompts o los esquemas, se sube `VERSION_LECTURA` y lo leído antes deja de usarse. Se puede borrar en *Ajustes*.
 
 **Categorías fijas:** Alimentación · Restauración · Transporte y combustible · Suministros (luz,
 agua, gas) · Telecomunicaciones y software · Material y oficina · Salud · Impuestos y cuotas ·
@@ -65,7 +65,7 @@ Compras online · Otros. Si la IA devuelve otra, se convierte en "Otros".
 | F3 | Agrupar por categoría + Excel | ✅ Implementada | `cuadre.py` (agrupación), `app.py`: `a_excel`, pestaña «📊 Por categoría» | CA1, CA7 | Reglas probadas en `tests/`; falta la prueba manual con la IA real |
 | F6 | Historial de cuadres: abrir, ampliar con más comprobantes, renombrar, eliminar y empezar uno nuevo | ✅ Implementada | `almacen.py` (IndexedDB); `app.py`: barra lateral «Mis cuadres», `empezar`, `juntar_comprobantes` | CA19–CA22 | Probado en Chrome con los ejemplos (sin llamar a la IA) y en `tests/test_app.py` |
 | F4 | Enviar los gastos a un programa de contabilidad externo | 📝 Planeada | — | — | Anunciada en HITO_SEMANA2.md; sin especificar |
-| F5 | Conversar con lo extraído (RAG) | ✅ Implementada | `cuadre.py`: `consultar_gastos`; `app.py`: `datos_para_conversar`, `conversar`, pestaña «💬 Pregunte» | CA23–CA25 | Reglas y conversación con modelo falso probadas en `tests/`; falta la prueba manual con la IA real |
+| F5 | Conversar con lo extraído (RAG) | ✅ Implementada | `cuadre.py`: `consultar_gastos`; `app.py`: `datos_para_conversar`, `conversar`, pestaña «💬 Pregunte»; `almacen.py`: `guardar_conversacion` | CA23–CA26 | Reglas y conversación con modelo falso probadas en `tests/`; falta la prueba manual con la IA real |
 
 Estados: 📝 Planeada · 🚧 En curso · ✅ Implementada (el código existe y se puede usar) ·
 🧪 Verificada (sus criterios de aceptación pasan con los datos de ejemplo) · ❌ Descartada (no cuenta en el total).
@@ -81,7 +81,7 @@ Estados: 📝 Planeada · 🚧 En curso · ✅ Implementada (el código existe y
 5. Desplegable **Ajustes**: días de tolerancia, ventana de reembolsos y botón **🗑️ Borrar lo guardado en este navegador**.
 6. Botón principal **Cuadrar gastos** (cuadre nuevo) o **Añadir al cuadre** (cuadre abierto: suma los comprobantes nuevos a los que tenía; si uno se llama igual, manda el nuevo) con barra de progreso. El resultado se guarda en el historial.
 7. Resultado: 4 cifras resumen + pestañas *Por categoría*, *Todos los gastos*, *Qué falta*, *Lo que ha leído la IA*, *Pregunte* + botón **Descargar en Excel**.
-   En **💬 Pregunte**, un chat sobre el cuadre abierto (preguntas y respuestas en un recuadro con desplazamiento y el campo para escribir siempre debajo): cada respuesta con un total lleva un desplegable con los gastos que ha sumado la app. Botón **🗑️ Borrar la conversación**; al abrir otro cuadre, añadirle comprobantes o empezar uno nuevo, la conversación empieza de cero (no se guarda en el navegador).
+   En **💬 Pregunte**, un chat sobre el cuadre abierto (preguntas y respuestas en un recuadro con desplazamiento y el campo para escribir siempre debajo): cada respuesta con un total lleva un desplegable con los gastos que ha sumado la app. Botón **🗑️ Borrar la conversación**. La conversación se guarda en el navegador con su cuadre: al abrirlo desde *Mis cuadres* vuelve a salir; un cuadre nuevo empieza sin conversación.
 8. Al pulsar sobre un comprobante en una tabla se abre una ventana con la foto o el PDF, un botón para descargarlo y, debajo, su detalle. Si el cuadre se abrió del historial, el archivo sale de IndexedDB.
 
 ## 4. Pieza de IA
@@ -128,7 +128,7 @@ Estados: 📝 Planeada · 🚧 En curso · ✅ Implementada (el código existe y
 Datos de prueba: `ejemplos/` (inventados, regenerables con `python ejemplos/generar_ejemplos.py`).
 
 **Pruebas automáticas** (`python -m unittest discover -s tests -v`, sin llamar a la IA): cubren
-CA1–CA13, CA15–CA22, CA23 y CA24 con lo que la IA *debería* leer de los ejemplos (`tests/datos_ejemplo.py`) y
+CA1–CA13, CA15–CA22, CA23, CA24 y CA26 con lo que la IA *debería* leer de los ejemplos (`tests/datos_ejemplo.py`) y
 modelos de IA falsos para los errores y el paso a Claude. Quedan para la prueba manual con la app: que la IA lea
 bien los ejemplos, CA14, CA25 y que las respuestas de la conversación sean correctas con la IA real. Cada prueba lleva en su nombre el ID del criterio (`test_CA7_…`).
 GitHub las pasa solas en cada push y pull request (`.github/workflows/pruebas.yml`), sin claves.
@@ -159,6 +159,7 @@ GitHub las pasa solas en cada push y pull request (`.github/workflows/pruebas.ym
 | CA23 | Pregunta con un total | Ejemplo → *Pregunte*: «¿Cuánto he gastado en restauración?» | 25,60 € (2 gastos), igual que en *Por categoría*; el desplegable muestra las 2 filas |
 | CA24 | Conversación seguida | Tras CA23: «¿Y cuáles no tienen ticket?» | Entiende la pregunta anterior; abrir otro cuadre o *Nuevo cuadre* vacía la conversación. Sin clave: mensaje rojo |
 | CA25 | Pregunta sin respuesta en los datos | «¿Cuánto gasté en enero?» o «¿Es deducible la gasolina?» | Dice que no está en el cuadre o que no puede aconsejar; no inventa importes |
+| CA26 | Conversación guardada | Hacer 2 preguntas, recargar la página y abrir el cuadre en *Mis cuadres* | Salen las 2 preguntas con sus respuestas y se puede seguir; al eliminar el cuadre o *Borrar la conversación* desaparece |
 | CA14 | Usuario no técnico | Persona que no conoce la app | Con el ejemplo, entiende qué le falta en menos de 2 minutos sin ayuda |
 
 ## 6. Prompts reutilizables

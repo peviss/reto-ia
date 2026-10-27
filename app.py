@@ -47,6 +47,13 @@ MAX_LINEAS_EXTRACTO = 300
 TURNOS_RECORDADOS = 10  # en la conversación, cuántas preguntas anteriores se le recuerdan a la IA
 CARPETA_EJEMPLOS = Path(__file__).parent / "ejemplos"
 
+# Gráfico de tarta por categoría. Más de 6 porciones no se distinguen: las pequeñas van a «Resto».
+# Colores en orden fijo, comprobados para daltonismo y legibles sobre el tema claro y el oscuro
+# (Streamlit no dice de forma fiable qué tema ve cada persona, así que valen para los dos).
+PORCIONES_TARTA = 6
+COLORES_TARTA = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300"]
+GRIS_RESTO = "#8a8980"
+
 # Logs en la consola donde corre «streamlit run» (las librerías, solo avisos)
 logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(levelname)s [%(name)s] %(message)s")
 log = logging.getLogger("cuadra")
@@ -519,6 +526,54 @@ def tabla_con_comprobantes(tabla, columna, clave):
     st.dataframe(tabla, hide_index=True, key=clave, on_select=al_pulsar, selection_mode="single-cell")
 
 
+def euros(importe):
+    """12345.6 → «12.345,60 €», como se escribe en España."""
+    return f"{importe:,.2f} €".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def grafico_categorias(resumen):
+    """Tarta (con hueco en el centro) de lo gastado en cada categoría, de mayor a menor.
+
+    La leyenda lleva el porcentaje de cada categoría y, al pasar el ratón, se ve el detalle.
+    """
+    datos = resumen[["Categoría", "Total (€)", "Gastos"]]  # ya viene de mayor a menor
+    colores = COLORES_TARTA[:len(datos)]
+    if len(datos) > PORCIONES_TARTA:
+        resto = datos.iloc[PORCIONES_TARTA - 1:]
+        fila_resto = {"Categoría": f"Resto ({len(resto)} categorías)",
+                      "Total (€)": resto["Total (€)"].sum(), "Gastos": resto["Gastos"].sum()}
+        datos = pd.concat([datos.iloc[:PORCIONES_TARTA - 1], pd.DataFrame([fila_resto])])
+        colores = COLORES_TARTA[:PORCIONES_TARTA - 1] + [GRIS_RESTO]
+    datos = datos.reset_index(drop=True)
+    datos["orden"] = datos.index
+    porcentaje = datos["Total (€)"] / datos["Total (€)"].sum() * 100
+    datos["Porcentaje"] = porcentaje.map(lambda x: f"{x:.0f} %".replace(".", ","))
+    datos["Etiqueta"] = datos["Categoría"] + " · " + datos["Porcentaje"]
+    datos["Total"] = datos["Total (€)"].map(euros)
+
+    st.vega_lite_chart(datos, {
+        # Tamaño fijo que cabe en la columna (también en el móvil); la leyenda va debajo.
+        # El radio se calcula con el hueco que deja la leyenda: con un radio fijo, la tarta se corta
+        "width": 300,
+        "height": 300,
+        "mark": {"type": "arc", "outerRadius": {"expr": "min(width, height) / 2 - 2"},
+                 "innerRadius": {"expr": "min(width, height) / 4"}, "cornerRadius": 4,
+                 "padAngle": 0.015},  # un hueco entre porciones, del color del fondo sea cual sea el tema
+        "encoding": {
+            "theta": {"field": "Total (€)", "type": "quantitative", "stack": True},
+            "order": {"field": "orden", "type": "quantitative"},
+            "color": {"field": "Etiqueta", "type": "nominal", "sort": datos["Etiqueta"].tolist(),
+                      "scale": {"range": colores}, "legend": {"title": None, "orient": "bottom", "columns": 1, "labelLimit": 300}},
+            "tooltip": [
+                {"field": "Categoría", "type": "nominal"},
+                {"field": "Total", "type": "nominal", "title": "Gastado"},
+                {"field": "Porcentaje", "type": "nominal", "title": "Del total"},
+                {"field": "Gastos", "type": "quantitative", "title": "N.º de gastos"},
+            ],
+        },
+    }, width="content", height=300 + 45 * len(datos))  # la tarta y una línea de leyenda por porción
+
+
 st.set_page_config(page_title="Cuadra tus gastos", page_icon="🧾", layout="wide")
 
 st.title("🧾 Cuadra tus gastos")
@@ -715,9 +770,11 @@ if activo:
 
     pestanas = st.tabs(["📊 Por categoría", "📋 Todos los gastos", "⚠️ Qué falta", "🔍 Lo que ha leído la IA", "💬 Pregunte"])
     with pestanas[0]:
-        st.dataframe(resumen, hide_index=True)
+        c_tabla, c_grafico = st.columns([3, 2])
+        c_tabla.dataframe(resumen, hide_index=True)
         if not resumen.empty:
-            st.bar_chart(resumen, x="Categoría", y="Total (€)", horizontal=True)
+            with c_grafico:
+                grafico_categorias(resumen)
     with pestanas[1]:
         st.caption("🔗 = varios tickets justifican un solo pago (por ejemplo, una transferencia de reembolso). Comparten n.º de «Mov.». "
                    "Pulse sobre un comprobante para verlo.")

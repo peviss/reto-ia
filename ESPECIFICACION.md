@@ -44,7 +44,7 @@ comprobable y siempre da el mismo resultado.
 3. En la tabla, un reembolso agrupado ocupa **una fila por comprobante** con el mismo n.º de movimiento (*Mov.*), para que cada compra sume en **su** categoría.
 
 Extras de usabilidad: botón "Probar con datos de ejemplo", ajustes de días de tolerancia (0–10, por
-defecto 4) y de ventana de reembolsos (0–90, por defecto 30; 0 = no buscar), pestaña "Lo que ha leído la IA" para revisar, aviso de privacidad.
+defecto 4) y de ventana de reembolsos (0–90, por defecto 30; 0 = no buscar), pestaña "Lo que ha leído la IA" para revisar, aviso de privacidad, y ventana para **ver cada comprobante** al pulsar sobre su nombre (en *Todos los gastos* y en *Qué falta*), con lo que ha leído la IA y el gasto del banco con el que va.
 
 **Categorías fijas:** Alimentación · Restauración · Transporte y combustible · Suministros (luz,
 agua, gas) · Telecomunicaciones y software · Material y oficina · Salud · Impuestos y cuotas ·
@@ -74,6 +74,7 @@ Estados: 📝 Planeada · 🚧 En curso · ✅ Implementada (el código existe y
 5. Desplegable **Ajustes**: días de tolerancia y ventana de reembolsos.
 6. Botón principal **Cuadrar gastos** con barra de progreso.
 7. Resultado: 4 cifras resumen + pestañas *Por categoría*, *Todos los gastos*, *Qué falta*, *Lo que ha leído la IA* + botón **Descargar en Excel**.
+8. Al pulsar sobre un comprobante en una tabla se abre una ventana con la foto o el PDF, un botón para descargarlo y, debajo, su detalle.
 
 ## 4. Pieza de IA
 

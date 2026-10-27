@@ -6,6 +6,7 @@ App Streamlit (Ruta A) con Pydantic AI: Gemini (capa gratuita) y, si falla, Clau
 Las claves se leen de los secretos de la plataforma: nunca se escriben en el código.
 """
 
+import base64
 import io
 import logging
 import os
@@ -312,6 +313,49 @@ def a_excel(gastos, resumen, sueltos):
 
 # ---------- Interfaz ----------
 
+@st.dialog("Comprobante", width="large")
+def ver_comprobante(nombre, archivos, leidos, gastos):
+    """Muestra el ticket o la factura y, debajo, lo que ha leído la IA y con qué gasto va."""
+    st.subheader(nombre)
+    archivo = archivos.get(nombre)
+    if archivo is None:
+        st.warning("No se encuentra el archivo. Vuelva a subirlo y pulse «Cuadrar gastos».")
+    elif archivo["mime"] == "application/pdf":
+        pdf = base64.b64encode(archivo["datos"]).decode()
+        st.html(f'<iframe src="data:application/pdf;base64,{pdf}" width="100%" height="600"></iframe>')
+    else:
+        try:
+            st.image(ImageOps.exif_transpose(Image.open(io.BytesIO(archivo["datos"]))))
+        except Exception:  # p. ej. HEIC: el navegador no lo sabe mostrar
+            st.info("Esta foto no se puede mostrar aquí, pero puede descargarla.")
+    if archivo is not None:
+        st.download_button("⬇️ Descargar el archivo", data=archivo["datos"], file_name=nombre, mime=archivo["mime"])
+
+    st.write("**Lo que ha leído la IA**")
+    leido = next((c for c in leidos if c["archivo"] == nombre), None)
+    if leido:
+        st.dataframe(pd.DataFrame([{
+            "Comercio": leido["comercio"], "Fecha": leido["fecha"], "Total (€)": leido["total"],
+            "Categoría": leido["categoria"], "Se ha podido leer": "Sí" if leido["legible"] else "No",
+        }]), hide_index=True)
+    st.write("**Gasto del banco con el que va**")
+    gasto = gastos[gastos["Comprobante"] == nombre]
+    if gasto.empty:
+        st.caption("No aparece en el extracto (puede ser un pago en efectivo, de otra tarjeta o de otro mes).")
+    else:
+        st.dataframe(gasto, hide_index=True)
+
+
+def tabla_con_comprobantes(tabla, columna, clave):
+    """Tabla en la que, al pulsar una celda de `columna`, se abre ese comprobante."""
+    def al_pulsar():
+        celdas = st.session_state[clave].selection.cells
+        if celdas and celdas[0][1] == columna:
+            st.session_state.abrir_comprobante = tabla.iloc[celdas[0][0]][columna]
+
+    st.dataframe(tabla, hide_index=True, key=clave, on_select=al_pulsar, selection_mode="single-cell")
+
+
 st.set_page_config(page_title="Cuadra tus gastos", page_icon="🧾", layout="wide")
 
 st.title("🧾 Cuadra tus gastos")
@@ -391,11 +435,12 @@ if st.button("Cuadrar gastos", type="primary"):
         if error:
             st.error(error)
         else:
-            st.session_state.resultado = (movimientos, leidos)
+            # Se guardan también los archivos para poder enseñarlos al pulsar sobre ellos
+            st.session_state.resultado = (movimientos, leidos, {a["nombre"]: a for a in comprobantes})
 
 # El resultado se guarda para poder mover el ajuste de días sin volver a llamar a la IA
 if "resultado" in st.session_state:
-    movimientos, leidos = st.session_state.resultado
+    movimientos, leidos, archivos = st.session_state.resultado
     gastos, resumen, sueltos = cuadrar(movimientos, leidos, tolerancia, ventana_reembolso)
 
     # Un reembolso agrupado ocupa varias filas: contamos movimientos por su n.º («Mov.»)
@@ -421,8 +466,9 @@ if "resultado" in st.session_state:
         if not resumen.empty:
             st.bar_chart(resumen, x="Categoría", y="Total (€)", horizontal=True)
     with pestanas[1]:
-        st.caption("🔗 = varios tickets justifican un solo pago (por ejemplo, una transferencia de reembolso). Comparten n.º de «Mov.».")
-        st.dataframe(gastos, hide_index=True)
+        st.caption("🔗 = varios tickets justifican un solo pago (por ejemplo, una transferencia de reembolso). Comparten n.º de «Mov.». "
+                   "Pulse sobre un comprobante para verlo.")
+        tabla_con_comprobantes(gastos, "Comprobante", "tabla_gastos")
     with pestanas[2]:
         faltan = gastos[gastos["Comprobante"] == ""]
         st.subheader("Gastos del banco sin ticket ni factura")
@@ -435,14 +481,20 @@ if "resultado" in st.session_state:
         if sueltos.empty:
             st.success("Todos los comprobantes están en el extracto.")
         else:
-            st.caption("Pueden ser pagos en efectivo, de otra tarjeta, de otro mes, o fotos que la IA no ha leído bien.")
-            st.dataframe(sueltos, hide_index=True)
+            st.caption("Pueden ser pagos en efectivo, de otra tarjeta, de otro mes, o fotos que la IA no ha leído bien. "
+                       "Pulse sobre un archivo para verlo.")
+            tabla_con_comprobantes(sueltos, "Archivo", "tabla_sueltos")
     with pestanas[3]:
         st.caption("Compruebe que los importes y fechas coinciden con sus documentos: la IA puede equivocarse.")
         st.write("**Comprobantes**")
         st.dataframe(pd.DataFrame(leidos), hide_index=True)
         st.write("**Movimientos del extracto**")
         st.dataframe(pd.DataFrame(movimientos), hide_index=True)
+
+    # Se abre aquí (y no en la tabla) para que no vuelva a salir al mover un ajuste
+    nombre = st.session_state.pop("abrir_comprobante", "")
+    if nombre:
+        ver_comprobante(nombre, archivos, leidos, gastos)
 
     st.download_button(
         "⬇️ Descargar en Excel (para la gestoría)",

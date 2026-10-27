@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 from pydantic_ai.exceptions import ModelConnectionError, ModelHTTPError, ModelRateLimitError
-from pydantic_ai.messages import ModelResponse, ToolCallPart
+from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import FunctionModel
 from streamlit.runtime.secrets import Secrets
@@ -102,6 +102,59 @@ class ErroresDeLaIA(unittest.TestCase):
     def test_sin_red(self):
         _, error = self.llamar(ModeloFalso(ModelConnectionError("falso", "sin red")))
         self.assertIn("No hay conexión", error)
+
+
+class ModeloQueConsulta(FunctionModel):
+    """Imita la conversación: primero pide sumar_gastos con unos filtros y luego responde con el total."""
+
+    def __init__(self, filtros):
+        self.filtros = filtros
+        self.vistos = []  # textos de usuario que ha recibido en cada pregunta
+        super().__init__(self.responder)
+
+    def responder(self, mensajes, _info):
+        devuelto = [p for p in mensajes[-1].parts if isinstance(p, ToolReturnPart)]
+        if devuelto:
+            return ModelResponse(parts=[TextPart(f"Total: {devuelto[0].content['total_euros']} €")])
+        self.vistos.append([p.content for m in mensajes for p in m.parts if p.part_kind == "user-prompt"])
+        return ModelResponse(parts=[ToolCallPart("sumar_gastos", self.filtros)])
+
+
+class Conversacion(unittest.TestCase):
+    """F5: preguntar sobre lo extraído. Los totales los calcula Python, no la IA."""
+
+    def setUp(self):
+        self.gastos, _, self.sueltos = app.cuadrar(datos_ejemplo.MOVIMIENTOS, datos_ejemplo.COMPROBANTES)
+        self.datos = app.datos_para_conversar(datos_ejemplo.MOVIMIENTOS, datos_ejemplo.COMPROBANTES,
+                                              self.gastos, self.sueltos)
+
+    def preguntar(self, modelo, pregunta, turnos=()):
+        with mock.patch.object(app.time, "sleep"), mock.patch.object(app.st, "info"):
+            return app.conversar(modelo, pregunta, list(turnos), self.gastos, self.datos)
+
+    def test_datos_incluyen_todo_lo_extraido(self):
+        for texto in ["CAFETERIA LA PLAZA", "ticket_restaurante_efectivo.jpg", "Reembolso agrupado", "1200"]:
+            self.assertIn(texto, self.datos)
+
+    def test_CA23_el_total_lo_calcula_python(self):
+        turno, error = self.preguntar(ModeloQueConsulta({"categoria": "Restauración"}), "¿Cuánto en restauración?")
+        self.assertIsNone(error)
+        self.assertEqual(turno["respuesta"], "Total: 25.6 €")
+        self.assertEqual(turno["consultas"][0]["numero_de_gastos"], 2)
+
+    def test_CA24_recuerda_las_preguntas_anteriores(self):
+        modelo = ModeloQueConsulta({"justificante": "sin"})
+        primero, _ = self.preguntar(modelo, "¿Cuánto en restauración?")
+        segundo, _ = self.preguntar(modelo, "¿Y cuáles no tienen ticket?", [primero])
+        self.assertEqual(modelo.vistos[-1], ["¿Cuánto en restauración?", "¿Y cuáles no tienen ticket?"])
+        self.assertEqual(segundo["consultas"][0]["numero_de_gastos"], 3)
+
+    def test_cuota_agotada_reintenta_una_vez(self):
+        modelo = ModeloFalso(error_api(429), error_api(429))
+        turno, error = self.preguntar(modelo, "hola")
+        self.assertIsNone(turno)
+        self.assertEqual(modelo.llamadas, 2)
+        self.assertIn("cuota gratuita", error)
 
 
 class ModeloDeReserva(unittest.TestCase):
@@ -295,6 +348,21 @@ class Interfaz(unittest.TestCase):
         self.boton("Nuevo cuadre").click().run()
         self.assertEqual(self.at.subheader[0].value, "Nuevo cuadre")
         self.assertFalse(self.at.metric)
+
+    def test_CA24_conversacion_sin_clave_y_al_cambiar_de_cuadre(self):
+        cuadre = {"id": "c1", "nombre": "Octubre", "extracto": "extracto_octubre.csv", "fecha": "31/10/26, 10:00",
+                  "actualizado": 1, "movimientos": datos_ejemplo.MOVIMIENTOS, "leidos": datos_ejemplo.COMPROBANTES}
+        self.at.session_state["guardado"] = {"lecturas": {}, "cuadres": {"c1": cuadre}}
+        self.at.session_state["guardado_cargado"] = True
+        self.at.run()
+        self.boton("Octubre").click().run()
+        self.at.chat_input[0].set_value("¿Cuánto he gastado?").run()
+        self.assertFalse(self.at.exception)
+        self.assertIn("falta la clave", self.at.error[0].value)
+        # Al cambiar de cuadre, la conversación empieza de cero
+        self.at.session_state["conversacion"] = [{"pregunta": "p", "respuesta": "r", "consultas": [], "mensajes": []}]
+        self.boton("Nuevo cuadre").click().run()
+        self.assertEqual(self.at.session_state["conversacion"], [])
 
     def test_arranca_sin_errores(self):
         self.assertFalse(self.at.exception)

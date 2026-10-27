@@ -13,6 +13,7 @@ import logging
 import os
 import time
 from pathlib import Path
+from typing import Literal
 
 os.environ.setdefault("PYDANTIC_AI_NO_BANNER", "1")  # sin el anuncio de Pydantic AI en la consola
 
@@ -33,7 +34,7 @@ from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.google import GoogleProvider
 
 import almacen
-from cuadre import CATEGORIAS, cuadrar
+from cuadre import CATEGORIAS, consultar_gastos, cuadrar
 
 MODELO_GEMINI = "gemini-3.8-flash"
 MODELO_RESERVA = "claude-haiku-5-5"  # Anthropic: solo se usa si Gemini falla
@@ -41,6 +42,7 @@ MAX_COMPROBANTES = 20
 COMPROBANTES_POR_LLAMADA = 5
 MAX_MB_ARCHIVO = 8
 MAX_LINEAS_EXTRACTO = 300
+TURNOS_RECORDADOS = 10  # en la conversación, cuántas preguntas anteriores se le recuerdan a la IA
 CARPETA_EJEMPLOS = Path(__file__).parent / "ejemplos"
 
 # Logs en la consola donde corre «streamlit run» (las librerías, solo avisos)
@@ -99,6 +101,19 @@ cantidad entregada en efectivo.
 - categoria: elige UNA de esta lista, exactamente escrita así: {LISTA_CATEGORIAS}.
 - legible: false si no es un ticket o factura o no se puede leer el total (entonces total = 0).
 - No inventes datos: si dudas de un número, marca legible = false.
+"""
+
+PROMPT_CONVERSACION = f"""Eres un asistente que ayuda a una persona sin conocimientos contables a entender \
+sus gastos. Respondes SOLO con los datos del cuadre que van más abajo: los gastos del extracto del banco, \
+con qué ticket o factura se han emparejado, los comprobantes que no están en el banco, lo que se ha leído \
+de cada comprobante y los ingresos.
+
+Reglas:
+- Para cualquier total, suma o recuento de gastos usa SIEMPRE la herramienta sumar_gastos: no sumes tú.
+- Categorías válidas: {LISTA_CATEGORIAS}. Fechas en AAAA-MM-DD.
+- Un reembolso agrupado ocupa varias filas con el mismo n.º de «Mov.»: es un solo pago.
+- Si algo no está en los datos, dilo; no lo inventes. No digas si un gasto es deducible ni des consejos fiscales.
+- Responde en español, tratando de usted, en pocas frases y sin jerga. Importes con coma decimal y «€».
 """
 
 
@@ -326,6 +341,76 @@ def leer_comprobantes_con_memoria(modelo, archivos, barra):
     return ya_leidos + nuevos, None
 
 
+def datos_para_conversar(movimientos, leidos, gastos, sueltos):
+    """Todo lo extraído del cuadre, en texto (CSV), para dárselo a la IA en la conversación.
+
+    Un cuadre tiene como mucho unos cientos de filas: cabe entero y no hace falta buscar trozos.
+    """
+    ingresos = pd.DataFrame([m for m in movimientos if m["importe"] >= 0], columns=["fecha", "concepto", "importe"])
+    return "\n\n".join([
+        "## Gastos del extracto y su comprobante\n" + gastos.to_csv(index=False),
+        "## Comprobantes que no aparecen en el extracto\n" + sueltos.to_csv(index=False),
+        "## Lo que se ha leído de cada comprobante\n" + pd.DataFrame(leidos).to_csv(index=False),
+        "## Ingresos del extracto\n" + ingresos.to_csv(index=False),
+    ])
+
+
+def conversar(modelo, pregunta, turnos, gastos, datos):
+    """Responde a una pregunta sobre el cuadre abierto, recordando las anteriores (F5).
+
+    La IA entiende la pregunta y redacta; los totales los calcula Python con la herramienta sumar_gastos.
+    Devuelve (turno, mensaje_de_error): el turno lleva la pregunta, la respuesta, las consultas hechas
+    (para enseñar qué gastos se han sumado) y los mensajes para recordárselos a la IA la próxima vez.
+    """
+    consultas = []
+    agente = Agent(modelo, instructions=f"{PROMPT_CONVERSACION}\n# Datos del cuadre\n\n{datos}",
+                   model_settings={"temperature": 0})
+
+    @agente.tool_plain
+    def sumar_gastos(categoria: str | None = None, desde: str | None = None, hasta: str | None = None,
+                     texto: str | None = None, justificante: Literal["con", "sin"] | None = None) -> dict:
+        """Total en euros, n.º de gastos y filas de los gastos del extracto que cumplen los filtros.
+
+        Args:
+            categoria: una de las categorías válidas; nada = todas.
+            desde: primera fecha incluida (AAAA-MM-DD).
+            hasta: última fecha incluida (AAAA-MM-DD).
+            texto: palabra del comercio o del concepto del banco, por ejemplo "cafeteria".
+            justificante: "con" = solo los que tienen ticket o factura; "sin" = solo los que no.
+        """
+        resultado = consultar_gastos(gastos, categoria, desde, hasta, texto, justificante)
+        log.info("Conversación: sumar_gastos(%s, %s, %s, %s, %s) = %s €", categoria, desde, hasta, texto,
+                 justificante, resultado["total_euros"])
+        consultas.append(resultado)
+        return resultado
+
+    # Solo las últimas preguntas, para no gastar cuota de más
+    historial = [m for turno in turnos[-TURNOS_RECORDADOS:] for m in turno["mensajes"]]
+    for intento in range(2):
+        try:
+            respuesta = agente.run_sync(pregunta, message_history=historial)
+            break
+        except (ModelAPIError, FallbackExceptionGroup) as e:
+            log.warning("Falló la IA en la conversación (código %s): %r", codigo_error(e), e)
+            if codigo_error(e) == 429 and intento == 0:
+                st.info("Hay muchas consultas. Esperando 30 segundos para reintentar…")
+                time.sleep(30)
+                consultas.clear()
+                continue
+            return None, mensaje_error(e)
+        except UnexpectedModelBehavior as e:
+            log.warning("Respuesta de la IA que no se entiende en la conversación: %s", e)
+            return None, "La IA no ha sabido responder. Pruebe a preguntarlo de otra forma."
+        except Exception:
+            log.exception("Error inesperado en la conversación")
+            return None, "No hay conexión con el servicio de IA. Pruebe de nuevo en unos minutos."
+
+    log.info("Conversación: respondido con %s (tokens: %s entrada, %s salida)", respuesta.response.model_name,
+             respuesta.usage.input_tokens, respuesta.usage.output_tokens)
+    return {"pregunta": pregunta, "respuesta": respuesta.output, "consultas": consultas,
+            "mensajes": respuesta.new_messages()}, None
+
+
 def validar(extracto, comprobantes, editando=False):
     """Comprueba la entrada antes de gastar cuota. Devuelve un aviso o None.
 
@@ -401,6 +486,23 @@ def ver_comprobante(nombre, archivos, leidos, gastos, huellas):
         st.dataframe(gasto, hide_index=True)
 
 
+def mostrar_turno(turno):
+    """Una pregunta y su respuesta en la conversación."""
+    with st.chat_message("user"):
+        st.markdown(turno["pregunta"])
+    mostrar_respuesta(turno)
+
+
+def mostrar_respuesta(turno):
+    """La respuesta de la IA, con los gastos que ha sumado la app para responder."""
+    with st.chat_message("assistant"):
+        st.markdown(turno["respuesta"])
+        filas = [f for consulta in turno["consultas"] for f in consulta["filas"]]
+        if filas:
+            with st.expander("Gastos que ha sumado la app para responder"):
+                st.dataframe(pd.DataFrame(filas).drop_duplicates(), hide_index=True)
+
+
 def tabla_con_comprobantes(tabla, columna, clave):
     """Tabla en la que, al pulsar una celda de `columna`, se abre ese comprobante."""
     def al_pulsar():
@@ -448,6 +550,7 @@ def empezar(id_cuadre=None):
     st.session_state.cuadre_activo = id_cuadre
     st.session_state.archivos = {}  # los archivos subidos son de otro cuadre
     st.session_state.ejemplo = False
+    st.session_state.conversacion = []  # las preguntas eran sobre otro cuadre (o sobre otros datos)
     st.session_state.subida = st.session_state.get("subida", 0) + 1  # vacía las subidas de archivos
 
 
@@ -604,7 +707,7 @@ if activo:
             "Revise las filas marcadas con «revisar» en *Todos los gastos*."
         )
 
-    pestanas = st.tabs(["📊 Por categoría", "📋 Todos los gastos", "⚠️ Qué falta", "🔍 Lo que ha leído la IA"])
+    pestanas = st.tabs(["📊 Por categoría", "📋 Todos los gastos", "⚠️ Qué falta", "🔍 Lo que ha leído la IA", "💬 Pregunte"])
     with pestanas[0]:
         st.dataframe(resumen, hide_index=True)
         if not resumen.empty:
@@ -634,6 +737,34 @@ if activo:
         st.dataframe(pd.DataFrame(leidos), hide_index=True)
         st.write("**Movimientos del extracto**")
         st.dataframe(pd.DataFrame(movimientos), hide_index=True)
+    with pestanas[4]:
+        st.caption("Pregunte lo que quiera sobre este cuadre, por ejemplo: «¿Cuánto he gastado en restauración?», "
+                   "«¿Qué gastos no tienen ticket?» o «¿Qué compré en la ferretería?». "
+                   "Los totales los calcula la app con sus datos; la IA solo los explica.")
+        turnos = st.session_state.setdefault("conversacion", [])
+        if turnos and st.button("🗑️ Borrar la conversación"):
+            turnos.clear()
+        # Como en cualquier chat: las preguntas y respuestas arriba y el campo para escribir siempre debajo
+        chat = st.container(height=500)
+        pregunta = st.chat_input("Escriba su pregunta…")
+        with chat:
+            for turno in turnos:
+                mostrar_turno(turno)
+            if pregunta:
+                with st.chat_message("user"):
+                    st.markdown(pregunta)
+                modelo = obtener_modelo()
+                if modelo is None:
+                    st.error("La app no está bien configurada (falta la clave). Avise a quien la mantiene.")
+                else:
+                    with st.spinner("Buscando la respuesta…"):
+                        datos = datos_para_conversar(movimientos, leidos, gastos, sueltos)
+                        turno, error = conversar(modelo, pregunta, turnos, gastos, datos)
+                    if error:
+                        st.error(error)
+                    else:
+                        turnos.append(turno)
+                        mostrar_respuesta(turno)
 
     # Se abre aquí (y no en la tabla) para que no vuelva a salir al mover un ajuste
     nombre = st.session_state.pop("abrir_comprobante", "")

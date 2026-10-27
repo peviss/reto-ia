@@ -7,7 +7,7 @@ Ejecutar:  python -m unittest discover -s tests -v
 import copy
 import unittest
 
-from cuadre import cuadrar
+from cuadre import consultar_gastos, cuadrar
 from datos_ejemplo import COMPROBANTES, MOVIMIENTOS, comprobante
 
 
@@ -103,6 +103,34 @@ class CriteriosDeAceptacion(unittest.TestCase):
         self.assertEqual(fila(gastos, "MARTA")["Estado"].tolist(), ["⚠️ Falta comprobante"])
         for archivo in ["reembolso_copisteria.jpg", "reembolso_ferreteria.jpg", "reembolso_fruteria.jpg"]:
             self.assertIn(archivo, sueltos["Archivo"].tolist())
+
+
+class Conversacion(unittest.TestCase):
+    """consultar_gastos: lo que suma Python cuando se pregunta en la conversación (F5)."""
+
+    def setUp(self):
+        self.gastos, self.resumen, _ = cuadrar_ejemplo()
+
+    def test_CA23_total_de_una_categoria_igual_que_la_tabla(self):
+        resultado = consultar_gastos(self.gastos, categoria="Restauración")
+        total_tabla = self.resumen.set_index("Categoría").loc["Restauración", "Total (€)"]
+        self.assertAlmostEqual(resultado["total_euros"], total_tabla, places=2)
+        self.assertEqual(resultado["numero_de_gastos"], 2)
+
+    def test_CA23_gastos_sin_justificante(self):
+        resultado = consultar_gastos(self.gastos, justificante="sin")
+        self.assertAlmostEqual(resultado["total_euros"], 230.00 + 35.99 + 12.80, places=2)
+        self.assertEqual(resultado["numero_de_gastos"], 3)
+
+    def test_CA23_por_fechas_un_reembolso_cuenta_una_vez(self):
+        resultado = consultar_gastos(self.gastos, desde="2026-10-20", hasta="2026-10-31")
+        self.assertAlmostEqual(resultado["total_euros"], 18.50 + 12.80 + 51.65, places=2)
+        self.assertEqual(resultado["numero_de_gastos"], 3)
+
+    def test_por_texto_sin_tildes_ni_mayusculas(self):
+        self.assertAlmostEqual(consultar_gastos(self.gastos, texto="Cafetería")["total_euros"], 25.60, places=2)
+        self.assertEqual(consultar_gastos(self.gastos, texto="ferreteria")["numero_de_gastos"], 1)
+        self.assertEqual(consultar_gastos(self.gastos, texto="no existe")["total_euros"], 0)
 
 
 class CasosLimite(unittest.TestCase):

@@ -235,3 +235,34 @@ def cuadrar(movimientos, comprobantes, tolerancia_dias=4, ventana_reembolso=30):
         columns=["Archivo", "Comercio", "Fecha", "Total (€)", "Motivo"],
     )
     return gastos, resumen, sueltos
+
+
+def consultar_gastos(gastos, categoria=None, desde=None, hasta=None, texto=None, justificante=None):
+    """Filtra la tabla de gastos de `cuadrar` y suma. La usa la conversación (F5) para que la IA no sume.
+
+    - categoria: una de CATEGORIAS. desde / hasta: 'AAAA-MM-DD', incluidos.
+    - texto: se busca (sin tildes ni mayúsculas) en el concepto del banco y en el nombre del comprobante.
+    - justificante: "con", "sin" o None (todos).
+    Devuelve un dict con el total en euros, el n.º de gastos (un reembolso agrupado cuenta una vez) y las filas.
+    """
+    filas = gastos
+    if categoria:
+        filas = filas[filas["Categoría"] == normalizar_categoria(categoria)]
+    if desde:
+        filas = filas[filas["Fecha"] >= desde]
+    if hasta:
+        filas = filas[filas["Fecha"] <= hasta]
+    if texto and normalizar(texto):
+        buscado = normalizar(texto)
+        en_concepto = filas["Concepto"].map(normalizar).str.contains(buscado, regex=False)
+        en_comprobante = filas["Comprobante"].map(normalizar).str.contains(buscado, regex=False)
+        filas = filas[en_concepto | en_comprobante]
+    if justificante == "con":
+        filas = filas[filas["Comprobante"] != ""]
+    elif justificante == "sin":
+        filas = filas[filas["Comprobante"] == ""]
+    return {
+        "total_euros": round(float(filas["Importe (€)"].sum()), 2),
+        "numero_de_gastos": int(filas["Mov."].nunique()),
+        "filas": filas.to_dict("records"),
+    }

@@ -24,6 +24,7 @@ Para 30–40 movimientos al mes son 1–2 horas, y la gestoría suele devolver u
 | Leer fotos de tickets y facturas PDF: comercio, fecha, total | Agrupar por categoría y sumar | Decidir si un gasto es deducible |
 | Proponer una categoría para cada gasto | Detectar gastos sin comprobante y comprobantes sin gasto | Conectarse al banco (el usuario descarga el extracto) |
 | | Exportar a Excel | Un ticket pagado en varios cargos (pagos fraccionados) |
+| Entender las preguntas del usuario sobre su cuadre y responderlas en lenguaje sencillo | Filtrar y sumar los gastos que pide la pregunta | Preguntas sobre varios cuadres a la vez; consejos fiscales |
 
 **Por qué este reparto:** leer documentos variados es lo que la IA hace bien y una regla no.
 Emparejar importes es lo que una regla hace bien y una IA puede inventarse: así el cruce es
@@ -36,6 +37,7 @@ comprobable y siempre da el mismo resultado.
 | F1 | Emparejar comprobantes con el extracto | Extracto (CSV/XLSX/PDF) + hasta 20 tickets/facturas (JPG/PNG/WEBP/HEIC/PDF) | Tabla de gastos con su comprobante (✅), varios comprobantes si es un reembolso agrupado (🔗) o "⚠️ Falta comprobante" |
 | F2 | Detectar lo que falta | El mismo resultado | Lista de gastos sin justificante + lista de comprobantes que no están en el banco (efectivo, otra tarjeta, ilegibles) |
 | F3 | Agrupar por categoría | El mismo resultado | Tabla y gráfico por categoría (total, nº de gastos, cuántos justificados, € sin justificar) + Excel descargable |
+| F5 | Conversar con lo extraído | Preguntas en lenguaje natural sobre el cuadre abierto («¿cuánto gasté en restauración?», «¿qué compré en la ferretería?») | Respuesta breve; si lleva un total, lo calcula Python y se muestran los gastos sumados |
 
 **Reglas de emparejamiento (en este orden):**
 
@@ -54,7 +56,7 @@ Compras online · Otros. Si la IA devuelve otra, se convierte en "Otros".
 
 ### 2.1 Estado de las funcionalidades
 
-**Implementadas: 4 / 6** · Verificadas: 0 / 6 · Última actualización: 2026-10-27
+**Implementadas: 5 / 6** · Verificadas: 0 / 6 · Última actualización: 2026-10-27
 
 | # | Funcionalidad | Estado | Dónde está | Criterios | Notas |
 |---|---|---|---|---|---|
@@ -63,7 +65,7 @@ Compras online · Otros. Si la IA devuelve otra, se convierte en "Otros".
 | F3 | Agrupar por categoría + Excel | ✅ Implementada | `cuadre.py` (agrupación), `app.py`: `a_excel`, pestaña «📊 Por categoría» | CA1, CA7 | Reglas probadas en `tests/`; falta la prueba manual con la IA real |
 | F6 | Historial de cuadres: abrir, ampliar con más comprobantes, renombrar, eliminar y empezar uno nuevo | ✅ Implementada | `almacen.py` (IndexedDB); `app.py`: barra lateral «Mis cuadres», `empezar`, `juntar_comprobantes` | CA19–CA22 | Probado en Chrome con los ejemplos (sin llamar a la IA) y en `tests/test_app.py` |
 | F4 | Enviar los gastos a un programa de contabilidad externo | 📝 Planeada | — | — | Anunciada en HITO_SEMANA2.md; sin especificar |
-| F5 | Responder preguntas sobre los gastos con un RAG | 📝 Planeada | — | — | Anunciada en HITO_SEMANA2.md; sin especificar |
+| F5 | Conversar con lo extraído (RAG) | ✅ Implementada | `cuadre.py`: `consultar_gastos`; `app.py`: `datos_para_conversar`, `conversar`, pestaña «💬 Pregunte» | CA23–CA25 | Reglas y conversación con modelo falso probadas en `tests/`; falta la prueba manual con la IA real |
 
 Estados: 📝 Planeada · 🚧 En curso · ✅ Implementada (el código existe y se puede usar) ·
 🧪 Verificada (sus criterios de aceptación pasan con los datos de ejemplo) · ❌ Descartada (no cuenta en el total).
@@ -78,7 +80,8 @@ Estados: 📝 Planeada · 🚧 En curso · ✅ Implementada (el código existe y
 4. Dos subidas de archivos en columnas: **Paso 1** extracto, **Paso 2** tickets y facturas. Con un cuadre abierto, el extracto es opcional (solo para cambiarlo) y el paso 2 es «Más tickets y facturas»; tras guardar, las subidas se vacían.
 5. Desplegable **Ajustes**: días de tolerancia, ventana de reembolsos y botón **🗑️ Borrar lo guardado en este navegador**.
 6. Botón principal **Cuadrar gastos** (cuadre nuevo) o **Añadir al cuadre** (cuadre abierto: suma los comprobantes nuevos a los que tenía; si uno se llama igual, manda el nuevo) con barra de progreso. El resultado se guarda en el historial.
-7. Resultado: 4 cifras resumen + pestañas *Por categoría*, *Todos los gastos*, *Qué falta*, *Lo que ha leído la IA* + botón **Descargar en Excel**.
+7. Resultado: 4 cifras resumen + pestañas *Por categoría*, *Todos los gastos*, *Qué falta*, *Lo que ha leído la IA*, *Pregunte* + botón **Descargar en Excel**.
+   En **💬 Pregunte**, un chat sobre el cuadre abierto (preguntas y respuestas en un recuadro con desplazamiento y el campo para escribir siempre debajo): cada respuesta con un total lleva un desplegable con los gastos que ha sumado la app. Botón **🗑️ Borrar la conversación**; al abrir otro cuadre, añadirle comprobantes o empezar uno nuevo, la conversación empieza de cero (no se guarda en el navegador).
 8. Al pulsar sobre un comprobante en una tabla se abre una ventana con la foto o el PDF, un botón para descargarlo y, debajo, su detalle. Si el cuadre se abrió del historial, el archivo sale de IndexedDB.
 
 ## 4. Pieza de IA
@@ -89,13 +92,22 @@ Estados: 📝 Planeada · 🚧 En curso · ✅ Implementada (el código existe y
   Basta con una de las dos claves (`GEMINI_API_KEY`, `ANTHROPIC_API_KEY`); con las dos, Claude es la reserva.
 - **Por qué:** hace falta leer fotos y PDF de formatos muy distintos. Un OCR clásico saca el texto,
   pero no sabe cuál es el total ni la fecha. Gemini es multimodal, devuelve datos estructurados y
-  tiene capa gratuita sin GPU. Un RAG no aplica: no hay que buscar en una base documental.
+  tiene capa gratuita sin GPU.
   Claude va de reserva porque la cuota gratuita de Gemini se agota pronto: así la app sigue
   funcionando. Pydantic AI permite usar los dos con el mismo código, esquemas y prompts.
+- **Conversación (F5), un RAG sin base vectorial:** la *recuperación* la hace Python. Un cuadre tiene como
+  mucho unos cientos de filas, así que **todo lo extraído** (gastos con su comprobante, comprobantes sueltos,
+  lo leído de cada comprobante e ingresos) va en CSV en las instrucciones (`datos_para_conversar`). Para
+  totales y recuentos la IA llama a la herramienta `sumar_gastos` (filtros: categoría, fechas, texto, con o sin
+  justificante), que ejecuta `consultar_gastos` en `cuadre.py`: así la IA entiende y redacta, pero **no suma**.
+  No se usa una base vectorial (Chroma o similar) porque buscar «trozos parecidos» puede dejarse filas al sumar,
+  los datos tendrían que guardarse en el servidor (y deben quedarse en el navegador) y añadiría una dependencia pesada.
+  Se le recuerdan a la IA las últimas 10 preguntas (`TURNOS_RECORDADOS`).
 - **Cómo se ahorra cuota:** las fotos se reducen a 1600 px (~300 KB); se envían 5 comprobantes por
   llamada, así que 20 comprobantes son 1 + 4 = 5 llamadas. El resultado se guarda y mover el ajuste
   de días no vuelve a llamar a la IA. Lo leído se guarda en el navegador (IndexedDB): volver a subir los mismos
   archivos, aunque sea otro día, no gasta cuota.
+  Cada pregunta de la conversación suele costar 2 llamadas (pedir la suma y redactar).
 - **Qué pasa si falla:**
 
 | Situación | Comportamiento |
@@ -109,15 +121,16 @@ Estados: 📝 Planeada · 🚧 En curso · ✅ Implementada (el código existe y
 | Error del servidor (5xx) / sin red | Mensaje de probar en unos minutos |
 | La IA se salta un archivo | Aparece como "No se ha podido leer" en *Qué falta* |
 | La IA lee mal un importe | No cuadrará: el ticket y el gasto aparecen en *Qué falta*; el usuario lo ve en *Lo que ha leído la IA* |
+| Falla la IA en la conversación | Los mismos mensajes que arriba (con un reintento si es 429); la pregunta no se guarda y se puede repetir |
 
 ## 5. Casos límite y criterios de aceptación
 
 Datos de prueba: `ejemplos/` (inventados, regenerables con `python ejemplos/generar_ejemplos.py`).
 
 **Pruebas automáticas** (`python -m unittest discover -s tests -v`, sin llamar a la IA): cubren
-CA1–CA13 y CA15–CA22 con lo que la IA *debería* leer de los ejemplos (`tests/datos_ejemplo.py`) y
+CA1–CA13, CA15–CA22, CA23 y CA24 con lo que la IA *debería* leer de los ejemplos (`tests/datos_ejemplo.py`) y
 modelos de IA falsos para los errores y el paso a Claude. Quedan para la prueba manual con la app: que la IA lea
-bien los ejemplos y CA14. Cada prueba lleva en su nombre el ID del criterio (`test_CA7_…`).
+bien los ejemplos, CA14, CA25 y que las respuestas de la conversación sean correctas con la IA real. Cada prueba lleva en su nombre el ID del criterio (`test_CA7_…`).
 GitHub las pasa solas en cada push y pull request (`.github/workflows/pruebas.yml`), sin claves.
 
 | ID | Caso | Entrada | Resultado esperado |
@@ -143,6 +156,9 @@ GitHub las pasa solas en cada push y pull request (`.github/workflows/pruebas.ym
 | CA20 | Historial | Cuadrar el ejemplo, recargar la página y abrirlo en *Mis cuadres* | Aparece con su fecha; al abrirlo, el mismo resultado sin llamar a la IA. *Nuevo cuadre* deja la página vacía |
 | CA22 | Ver los archivos de un cuadre guardado | Cuadrar el ejemplo, recargar la página, abrir el cuadre y pulsar un ticket y un PDF | Se ven la foto y el PDF con su botón de descarga; al eliminar el cuadre se borran sus archivos (si ningún otro cuadre los usa) |
 | CA21 | Ampliar un cuadre | Cuadre con extracto + 3 tickets; abrirlo y subir 2 tickets más → «Añadir al cuadre» | El cuadre tiene 5 comprobantes y se recalcula; el extracto se mantiene; sin archivos nuevos → aviso |
+| CA23 | Pregunta con un total | Ejemplo → *Pregunte*: «¿Cuánto he gastado en restauración?» | 25,60 € (2 gastos), igual que en *Por categoría*; el desplegable muestra las 2 filas |
+| CA24 | Conversación seguida | Tras CA23: «¿Y cuáles no tienen ticket?» | Entiende la pregunta anterior; abrir otro cuadre o *Nuevo cuadre* vacía la conversación. Sin clave: mensaje rojo |
+| CA25 | Pregunta sin respuesta en los datos | «¿Cuánto gasté en enero?» o «¿Es deducible la gasolina?» | Dice que no está en el cuadre o que no puede aconsejar; no inventa importes |
 | CA14 | Usuario no técnico | Persona que no conoce la app | Con el ejemplo, entiende qué le falta en menos de 2 minutos sin ayuda |
 
 ## 6. Prompts reutilizables
@@ -153,6 +169,10 @@ GitHub las pasa solas en cada push y pull request (`.github/workflows/pruebas.ym
   gastos en negativo; una categoría de la lista; no inventar ni incluir saldos.
 - `PROMPT_COMPROBANTES`: un elemento por archivo con su nombre exacto; el TOTAL con IVA (no
   subtotal ni efectivo entregado); `legible=false` si hay dudas, en lugar de inventar.
+
+- `PROMPT_CONVERSACION` (F5): responder solo con los datos del cuadre (van debajo, en CSV); para totales y
+  recuentos usar **siempre** la herramienta `sumar_gastos`; un reembolso agrupado es un solo pago; si no está en
+  los datos, decirlo; sin consejos fiscales; de usted, breve, importes con coma y «€».
 
 La forma de la respuesta la fija el esquema (`output_type` de Pydantic AI), no el texto del prompt. Los mismos prompts sirven para Gemini y para Claude.
 

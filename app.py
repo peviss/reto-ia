@@ -7,6 +7,7 @@ Las claves se leen de los secretos de la plataforma: nunca se escriben en el có
 """
 
 import io
+import logging
 import os
 import time
 from pathlib import Path
@@ -38,6 +39,11 @@ COMPROBANTES_POR_LLAMADA = 5
 MAX_MB_ARCHIVO = 8
 MAX_LINEAS_EXTRACTO = 300
 CARPETA_EJEMPLOS = Path(__file__).parent / "ejemplos"
+
+# Logs en la consola donde corre «streamlit run» (las librerías, solo avisos)
+logging.basicConfig(level=logging.WARNING, format="%(asctime)s %(levelname)s [%(name)s] %(message)s")
+log = logging.getLogger("cuadra")
+log.setLevel(logging.INFO)
 
 TIPOS_MIME = {
     ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp",
@@ -164,9 +170,11 @@ def obtener_modelo():
         try:
             modelos.append(crear(st.secrets[nombre_clave]))
         except Exception:  # sin secrets.toml o sin esa clave
-            pass
+            log.info("Sin %s: ese modelo no se usará", nombre_clave)
     if not modelos:
+        log.error("No hay ninguna clave de IA en los secretos")
         return None
+    log.info("Modelos disponibles (en orden): %s", ", ".join(m.model_name for m in modelos))
     return modelos[0] if len(modelos) == 1 else FallbackModel(*modelos)
 
 
@@ -208,20 +216,33 @@ def llamar_ia(modelo, contenido, prompt, esquema):
     """
     agente = Agent(modelo, output_type=list[esquema], instructions=prompt, model_settings={"temperature": 0})
     for intento in range(2):
+        inicio = time.perf_counter()
         try:
             respuesta = agente.run_sync(contenido)
             break
         except (ModelAPIError, FallbackExceptionGroup) as e:
+            log.warning("Falló la IA (%s, código %s): %r", esquema.__name__, codigo_error(e), e)
             if codigo_error(e) == 429 and intento == 0:
+                log.info("Reintento en 30 s por cuota")
                 st.info("Hay muchas consultas. Esperando 30 segundos para reintentar…")
                 time.sleep(30)
                 continue
             return None, mensaje_error(e)
-        except UnexpectedModelBehavior:  # la respuesta no encaja con el esquema
+        except UnexpectedModelBehavior as e:  # la respuesta no encaja con el esquema
+            log.warning("Respuesta de la IA que no encaja con %s: %s", esquema.__name__, e)
             return None, "La IA no ha devuelto datos para estos archivos. Pruebe con otros o con fotos más nítidas."
         except Exception:
+            log.exception("Error inesperado llamando a la IA (%s)", esquema.__name__)
             return None, "No hay conexión con el servicio de IA. Pruebe de nuevo en unos minutos."
 
+    usado = respuesta.response.model_name or "?"
+    log.info(
+        "%s: %d elementos con %s en %.1f s (tokens: %s entrada, %s salida)",
+        esquema.__name__, len(respuesta.output), usado, time.perf_counter() - inicio,
+        respuesta.usage.input_tokens, respuesta.usage.output_tokens,
+    )
+    if MODELO_GEMINI not in usado:
+        log.warning("Gemini no estaba disponible: ha respondido el modelo de reserva (%s)", usado)
     if not respuesta.output:
         return None, "La IA no ha devuelto datos para estos archivos. Pruebe con otros o con fotos más nítidas."
     return [elemento.model_dump() for elemento in respuesta.output], None
@@ -231,9 +252,12 @@ def leer_extracto(modelo, archivo):
     try:
         contenido = contenido_extracto(archivo)
     except ValueError as e:
+        log.info("Extracto rechazado (%s): %s", archivo["nombre"], e)
         return None, str(e)
     except Exception:
+        log.exception("No se pudo abrir el extracto %s", archivo["nombre"])
         return None, "No se ha podido abrir el extracto. Descárguelo de nuevo del banco en CSV, Excel o PDF."
+    log.info("Leyendo extracto %s (%.1f KB)", archivo["nombre"], len(archivo["datos"]) / 1024)
     return llamar_ia(modelo, [contenido], PROMPT_EXTRACTO, Movimiento)
 
 
@@ -242,6 +266,8 @@ def leer_comprobantes(modelo, archivos, barra):
     leidos = []
     for inicio in range(0, len(archivos), COMPROBANTES_POR_LLAMADA):
         lote = [reducir_imagen(a) for a in archivos[inicio:inicio + COMPROBANTES_POR_LLAMADA]]
+        log.info("Leyendo comprobantes %d-%d de %d: %s", inicio + 1, inicio + len(lote), len(archivos),
+                 ", ".join(a["nombre"] for a in lote))
         contenido = []
         for archivo in lote:
             contenido.append(f"Archivo: {archivo['nombre']}")
@@ -256,6 +282,7 @@ def leer_comprobantes(modelo, archivos, barra):
     nombres_leidos = {c["archivo"] for c in leidos}
     for archivo in archivos:
         if archivo["nombre"] not in nombres_leidos:
+            log.warning("La IA se ha saltado %s: se marca como no legible", archivo["nombre"])
             leidos.append({"archivo": archivo["nombre"], "comercio": "", "fecha": "", "total": 0.0, "categoria": "Otros", "legible": False})
     return leidos, None
 

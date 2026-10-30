@@ -29,7 +29,7 @@ import uuid
 import streamlit as st
 
 # Súbala si cambian los prompts o los esquemas: lo leído con la versión anterior deja de usarse
-VERSION_LECTURA = 1
+VERSION_LECTURA = 2
 
 log = logging.getLogger("cuadra")
 

@@ -79,19 +79,22 @@ class Comprobante(BaseModel):
     archivo: str
     comercio: str
     fecha: str  # AAAA-MM-DD, o "" si no se lee
+    vencimiento: str = ""  # AAAA-MM-DD: en facturas de servicios, el día que se cobra
     total: float
+    base_gravada: float = 0.0  # la parte con IVA, sin el IVA (para el descuento de Uruguay)
     categoria: str
     legible: bool
 
 
 LISTA_CATEGORIAS = ", ".join(CATEGORIAS)
 
-PROMPT_EXTRACTO = f"""Eres un asistente contable. Te paso un extracto bancario español \
-(CSV, Excel convertido a texto o PDF). Devuelve TODOS los movimientos, sin saltarte ninguno.
+PROMPT_EXTRACTO = f"""Eres un asistente contable. Te paso un extracto bancario \
+(de cualquier banco o país; CSV, Excel convertido a texto o PDF). Devuelve TODOS los movimientos, sin saltarte ninguno.
 
 Reglas:
 - fecha: la fecha de operación en formato AAAA-MM-DD.
-- concepto: el texto del concepto tal cual aparece.
+- concepto: el texto del concepto tal cual aparece. Si el extracto tiene una columna de asunto, \
+referencia o beneficiario (p. ej. a quién va una transferencia y para qué), añádela detrás con " - ".
 - importe: número con punto decimal. Gastos y cargos en NEGATIVO, ingresos en POSITIVO. \
 Si el extracto tiene columnas separadas de cargo y abono, aplica el signo tú.
 - categoria: elige UNA de esta lista, exactamente escrita así: {LISTA_CATEGORIAS}.
@@ -103,10 +106,14 @@ PROMPT_COMPROBANTES = f"""Eres un asistente contable. Te paso fotos de tickets y
 
 Reglas:
 - archivo: el nombre de archivo exacto que te indico.
-- comercio: nombre del comercio o empresa que emite el documento.
-- fecha: fecha de la compra o de la factura en formato AAAA-MM-DD; "" si no se lee.
+- comercio: nombre comercial corto del que emite el documento, como aparece en el logo o como \
+saldría en un banco (una marca o una sigla, p. ej. «UTE»), no la razón social larga.
+- fecha: fecha de la compra o de emisión de la factura en formato AAAA-MM-DD; "" si no se lee.
+- vencimiento: si es una factura con fecha de vencimiento o de cobro, esa fecha en AAAA-MM-DD; "" si no hay.
 - total: el TOTAL pagado, IVA incluido, número con punto decimal. No uses subtotales ni la \
 cantidad entregada en efectivo.
+- base_gravada: la suma de los importes gravados con IVA, SIN el IVA («subtotal gravado», \
+«importe gravado», «base imponible»); 0 si no aparece.
 - categoria: elige UNA de esta lista, exactamente escrita así: {LISTA_CATEGORIAS}.
 - legible: false si no es un ticket o factura o no se puede leer el total (entonces total = 0).
 - No inventes datos: si dudas de un número, marca legible = false.

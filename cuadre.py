@@ -2,13 +2,22 @@
 
 Aquí no hay IA: son reglas fijas y comprobables. La IA solo lee los documentos (app.py).
 
-1. Uno a uno: mismo importe (±1 céntimo) y fechas separadas como mucho N días.
+1. Uno a uno, en dos niveles:
+   - Seguro: mismo importe (±1 céntimo) y fechas separadas como mucho N días. La fecha del
+     comprobante puede ser la de emisión o la de vencimiento (un débito automático se cobra el día
+     que vence la factura): vale la más cercana.
+   - Por confirmar: si no es seguro, pero el nombre se parece mucho (el del comercio o el del
+     archivo) y el importe es parecido (±10 %) o las fechas están a menos de un mes. Se empareja
+     y el usuario confirma con un botón si es correcto (o lo descarta).
    Si hay varios candidatos, gana el de fecha más cercana y nombre más parecido.
+   En Uruguay, un servicio pagado por débito automático tiene 2 puntos menos de IVA: el banco
+   cobra el total menos el 2 % de la parte gravada. También es «seguro» (ver importes_con_descuento).
 2. Reembolsos agrupados: alguien paga varias compras y luego se le transfiere el total.
    Para cada gasto sin comprobante se busca una combinación de 2 o más comprobantes sueltos,
    anteriores al pago, que sumen exactamente su importe.
 """
 
+import re
 import unicodedata
 from datetime import date
 from difflib import SequenceMatcher
@@ -28,25 +37,61 @@ CATEGORIAS = [
     "Otros",
 ]
 
-# Palabras típicas de los conceptos bancarios que no ayudan a comparar nombres
-RUIDO = {"compra", "tarj", "tarjeta", "pago", "adeudo", "recibo", "bizum", "transf", "sl", "sa", "s.l.", "s.a."}
+# Palabras que no ayudan a comparar nombres: las típicas del banco, las de los nombres de archivo
+# y las muy cortas («de», «la»…)
+RUIDO = {
+    "compra", "tarj", "tarjeta", "pago", "adeudo", "recibo", "bizum", "transf", "trf", "sl", "sa", "s.l.", "s.a.",
+    "db", "deb", "aut", "debito", "automatico", "e-brou", "brou", "otros", "servicios", "comercio",
+    "factura", "ticket", "pdf", "jpg", "jpeg", "png", "webp", "heic",
+    "de", "del", "la", "las", "el", "los", "y", "a", "en",
+}
+
+# Uruguay: un servicio pagado por débito automático tiene 2 puntos menos de IVA (22 % → 20 %, 10 % → 8 %).
+# Es decir, se descuenta el 2 % de la parte gravada (la base, sin IVA).
+PAISES = ["España", "Uruguay"]
+TIPOS_IVA_UY = [22, 10]  # si no se ha leído la base, se supone todo gravado a uno de los dos
+PUNTOS_DESCUENTO_IVA = 2
+CATEGORIAS_SERVICIOS = {"Suministros (luz, agua, gas)", "Telecomunicaciones y software"}
+# «DEBITO AUTOMATICO», «DEB. AUTOMATICO», «DEB AUT», «DB AUT», «DB. AUT»… (ya en minúsculas y sin tildes)
+DEBITO_AUTOMATICO = re.compile(r"\b(deb(ito)?|db)\W*aut(omatico)?\b")
+# El banco puede redondear el IVA de otra forma que nosotros: se admiten 2 céntimos
+MARGEN_DESCUENTO = 0.02
+
+# Emparejamientos «por confirmar»
+PARECIDO_NOMBRE = 0.6  # a partir de aquí, el nombre se considera el mismo
+MARGEN_IMPORTE = 0.10  # importe parecido: ±10 %
+DIAS_POR_CONFIRMAR = 35  # fechas a como mucho un mes (una factura mensual)
+POR_CONFIRMAR = "🟡 Por confirmar"
 
 
 def normalizar(texto):
-    """Minúsculas, sin tildes y sin palabras de ruido bancario."""
+    """Minúsculas, sin tildes y sin palabras de ruido."""
     texto = unicodedata.normalize("NFKD", str(texto)).encode("ascii", "ignore").decode().lower()
-    palabras = [p.strip(".,*-/") for p in texto.split()]
+    palabras = [p.strip(".,*-/:()") for p in texto.replace("_", " ").split()]
     return " ".join(p for p in palabras if p and p not in RUIDO and not p.isdigit())
 
 
 def parecido(a, b):
-    """Parecido entre dos nombres, de 0 a 1. Si comparten una palabra de 4+ letras, al menos 0.6."""
+    """Parecido entre dos nombres, de 0 a 1. Si comparten una palabra de 3+ letras, al menos 0.6.
+
+    Con 3 letras ya cuentan las siglas («UTE», «OSE»); las palabras cortas sin sentido están en RUIDO.
+    """
     a, b = normalizar(a), normalizar(b)
     if not a or not b:
         return 0.0
     ratio = SequenceMatcher(None, a, b).ratio()
-    comunes = {p for p in a.split() if len(p) >= 4} & {p for p in b.split() if len(p) >= 4}
-    return max(ratio, 0.6) if comunes else ratio
+    comunes = {p for p in a.split() if len(p) >= 3} & {p for p in b.split() if len(p) >= 3}
+    return max(ratio, PARECIDO_NOMBRE) if comunes else ratio
+
+
+def parecido_comprobante(comp, concepto):
+    """Cuánto se parece el comprobante al concepto del banco: por el comercio o por el nombre del archivo.
+
+    El nombre del archivo ayuda mucho: «UTE - Factura.pdf» frente a un comercio leído como
+    «Administración Nacional de Usinas…», o una foto llamada como el asunto de una transferencia.
+    """
+    nombre_archivo = str(comp["archivo"]).rsplit(".", 1)[0]
+    return max(parecido(comp["comercio"], concepto), parecido(nombre_archivo, concepto))
 
 
 def leer_fecha(valor):
@@ -57,43 +102,127 @@ def leer_fecha(valor):
         return None
 
 
+def dias_entre(mov, comp):
+    """Días entre el gasto y el comprobante, con su fecha o con su vencimiento: la más cercana.
+
+    Devuelve None si no se puede saber (el comprobante no tiene fechas legibles).
+    """
+    f_mov = leer_fecha(mov["fecha"])
+    fechas = [leer_fecha(comp.get(campo, "")) for campo in ("fecha", "vencimiento")]
+    dias = [abs((f_mov - f).days) for f in fechas if f and f_mov]
+    return min(dias) if dias else None
+
+
 def normalizar_categoria(categoria):
     return categoria if categoria in CATEGORIAS else "Otros"
 
 
-def emparejar(movimientos, comprobantes, tolerancia_dias=4):
+def es_debito_automatico(concepto):
+    """True si el concepto del banco dice que es un débito automático."""
+    texto = unicodedata.normalize("NFKD", str(concepto)).encode("ascii", "ignore").decode().lower()
+    return bool(DEBITO_AUTOMATICO.search(texto))
+
+
+def importes_con_descuento(comp):
+    """Lo que cobra el banco por esta factura con 2 puntos menos de IVA (Uruguay, débito automático).
+
+    Se descuenta el 2 % de la base gravada. Ejemplo: total 2.378,00 con 1.707,98 gravados
+    → 2.378,00 − 34,16 = 2.343,84. Si la IA no ha leído la base, se supone todo gravado al 22 %
+    o al 10 % y se devuelven los dos importes posibles.
+    """
+    total, base = comp["total"], comp.get("base_gravada") or 0
+    bases = [base] if base > 0 else [total / (1 + tipo / 100) for tipo in TIPOS_IVA_UY]
+    return [round(total - b * PUNTOS_DESCUENTO_IVA / 100, 2) for b in bases]
+
+
+def como_encaja_importe(mov, comp, pais):
+    """Compara lo que cobró el banco con el total del comprobante.
+
+    Devuelve "exacto" (±1 céntimo), "descuento" (Uruguay: débito automático de un servicio con
+    2 puntos menos de IVA), "parecido" (±10 %) o None si no se parecen.
+    """
+    cobrado = abs(mov["importe"])
+    if abs(cobrado - comp["total"]) <= 0.01:
+        return "exacto"
+    if (pais == "Uruguay" and es_debito_automatico(mov["concepto"])
+            and normalizar_categoria(comp["categoria"]) in CATEGORIAS_SERVICIOS
+            and any(abs(cobrado - d) <= MARGEN_DESCUENTO for d in importes_con_descuento(comp))):
+        return "descuento"
+    if abs(cobrado - comp["total"]) <= MARGEN_IMPORTE * comp["total"]:
+        return "parecido"
+    return None
+
+
+def clave_pareja(fecha, concepto, importe, archivo):
+    """Identifica un gasto del banco con un comprobante, para recordar lo que confirma o descarta el usuario.
+
+    Se forma con lo que sale en la tabla de gastos, así que la app la puede rehacer desde una fila.
+    """
+    return f"{fecha}|{concepto}|{abs(float(importe)):.2f}|{archivo}"
+
+
+def motivo_duda(cobrado, comp, como, dias, tolerancia_dias):
+    """Por qué un emparejamiento está «por confirmar», en palabras sencillas."""
+    partes = ["mismo nombre"]
+    if como == "parecido":
+        partes.append(f"el importe no coincide (diferencia de {abs(cobrado - comp['total']):.2f})".replace(".", ","))
+    if dias is None:
+        partes.append("el comprobante no tiene fecha")
+    elif dias > tolerancia_dias:
+        partes.append(f"{dias} días entre las fechas")
+    return ", ".join(partes)
+
+
+def emparejar(movimientos, comprobantes, tolerancia_dias=4, pais="España", confirmados=(), rechazados=()):
     """Empareja cada comprobante con como mucho un gasto del extracto (y viceversa).
 
     movimientos: lista de dict con fecha, concepto, importe (gasto en negativo), categoria.
-    comprobantes: lista de dict con archivo, comercio, fecha, total, categoria, legible.
-    Devuelve dict {indice_movimiento: indice_comprobante}.
+    comprobantes: lista de dict con archivo, comercio, fecha, total, categoria, legible
+                  y, si se han leído, vencimiento y base_gravada.
+    pais: con "Uruguay" se aplica el descuento de IVA por débito automático.
+    confirmados / rechazados: claves de clave_pareja que el usuario ha confirmado o descartado.
+    Devuelve (pares, dudas): pares = {indice_movimiento: indice_comprobante};
+    dudas = {indice_movimiento: motivo} para los que están «por confirmar».
     """
     candidatos = []
     for i_mov, mov in enumerate(movimientos):
         if mov["importe"] >= 0:  # solo gastos
             continue
-        f_mov = leer_fecha(mov["fecha"])
+        cobrado = abs(mov["importe"])
         for i_comp, comp in enumerate(comprobantes):
             if not comp.get("legible", True) or comp["total"] <= 0:
                 continue
-            if abs(abs(mov["importe"]) - comp["total"]) > 0.01:
+            clave = clave_pareja(mov["fecha"], mov["concepto"], mov["importe"], comp["archivo"])
+            if clave in rechazados:
                 continue
-            f_comp = leer_fecha(comp["fecha"])
+            como = como_encaja_importe(mov, comp, pais)
+            dias = dias_entre(mov, comp)
             # Sin fecha legible en el ticket: se acepta por importe, pero con penalización
-            dias = abs((f_mov - f_comp).days) if f_mov and f_comp else tolerancia_dias
-            if dias > tolerancia_dias:
+            distancia = tolerancia_dias if dias is None else dias
+            nombre = parecido_comprobante(comp, mov["concepto"])
+            if clave in confirmados:
+                nivel, motivo = 0, None
+            elif como in ("exacto", "descuento") and distancia <= tolerancia_dias:
+                nivel, motivo = 1, None
+            elif como and nombre >= PARECIDO_NOMBRE and distancia <= DIAS_POR_CONFIRMAR:
+                nivel, motivo = 2, motivo_duda(cobrado, comp, como, dias, tolerancia_dias)
+            else:
                 continue
-            puntuacion = dias - 5 * parecido(comp["comercio"], mov["concepto"])
-            candidatos.append((puntuacion, i_mov, i_comp))
+            # Dentro de cada nivel: fecha cercana y nombre parecido. Un importe exacto gana a uno con
+            # descuento, y este a uno solo parecido.
+            puntuacion = distancia - 5 * nombre + {"exacto": 0, "descuento": 1, "parecido": 3}.get(como, 0)
+            candidatos.append((nivel, puntuacion, i_mov, i_comp, motivo))
 
-    # Primero las parejas más claras; cada movimiento y cada comprobante se usan una sola vez
-    pares = {}
-    usados = set()
-    for _, i_mov, i_comp in sorted(candidatos):
+    # Primero los confirmados, luego los seguros y al final los dudosos;
+    # cada movimiento y cada comprobante se usan una sola vez
+    pares, dudas, usados = {}, {}, set()
+    for _, _, i_mov, i_comp, motivo in sorted(candidatos, key=lambda c: c[:4]):
         if i_mov not in pares and i_comp not in usados:
             pares[i_mov] = i_comp
             usados.add(i_comp)
-    return pares
+            if motivo:
+                dudas[i_mov] = motivo
+    return pares, dudas
 
 
 def a_centimos(euros):
@@ -161,14 +290,17 @@ def agrupar_reembolsos(movimientos, comprobantes, pares, tolerancia_dias=4, vent
     return grupos
 
 
-def cuadrar(movimientos, comprobantes, tolerancia_dias=4, ventana_reembolso=30):
+def cuadrar(movimientos, comprobantes, tolerancia_dias=4, ventana_reembolso=30, pais="España",
+            confirmados=(), rechazados=()):
     """Devuelve (tabla_gastos, resumen_por_categoria, comprobantes_sin_movimiento) como DataFrames.
 
     En la tabla de gastos, un reembolso agrupado ocupa una fila por comprobante (con el mismo
     n.º de movimiento), para que cada compra sume en su categoría.
     Con ventana_reembolso=0 no se buscan reembolsos agrupados.
+    confirmados / rechazados: emparejamientos «por confirmar» que el usuario ya ha revisado (clave_pareja).
+    Con pais="Uruguay", un débito automático de un servicio cuadra con 2 puntos menos de IVA.
     """
-    pares = emparejar(movimientos, comprobantes, tolerancia_dias)
+    pares, dudas = emparejar(movimientos, comprobantes, tolerancia_dias, pais, set(confirmados), set(rechazados))
     grupos = agrupar_reembolsos(movimientos, comprobantes, pares, tolerancia_dias, ventana_reembolso) if ventana_reembolso else {}
 
     filas = []
@@ -180,9 +312,20 @@ def cuadrar(movimientos, comprobantes, tolerancia_dias=4, ventana_reembolso=30):
         base = {"Mov.": numero, "Fecha": mov["fecha"], "Concepto": mov["concepto"]}
         if i_mov in pares:
             comp = comprobantes[pares[i_mov]]
+            clave = clave_pareja(mov["fecha"], mov["concepto"], mov["importe"], comp["archivo"])
+            if i_mov in dudas:
+                estado = f"{POR_CONFIRMAR}: {dudas[i_mov]}"
+            elif clave in confirmados:
+                estado = "✅ Con comprobante · confirmado por usted"
+            else:
+                estado = "✅ Con comprobante"
+                if como_encaja_importe(mov, comp, pais) == "descuento":
+                    # El importe de la fila es lo que cobró el banco: menos que la factura
+                    descuento = round(comp["total"] - abs(mov["importe"]), 2)
+                    estado += f" · descuento IVA débito automático ({descuento:.2f})".replace(".", ",")
             filas.append({**base, "Importe (€)": round(abs(mov["importe"]), 2),
                           "Categoría": normalizar_categoria(comp["categoria"]),
-                          "Comprobante": comp["archivo"], "Estado": "✅ Con comprobante"})
+                          "Comprobante": comp["archivo"], "Estado": estado})
         elif i_mov in grupos:
             indices, ambiguo = grupos[i_mov]
             for n, i_comp in enumerate(indices, start=1):

@@ -34,19 +34,24 @@ comprobable y siempre da el mismo resultado.
 
 | # | Funcionalidad | Entrada | Salida |
 |---|---|---|---|
-| F1 | Emparejar comprobantes con el extracto | Extracto (CSV/XLSX/PDF) + hasta 20 tickets/facturas (JPG/PNG/WEBP/HEIC/PDF) | Tabla de gastos con su comprobante (✅), varios comprobantes si es un reembolso agrupado (🔗) o "⚠️ Falta comprobante" |
+| F1 | Emparejar comprobantes con el extracto | Extracto (CSV/XLSX/PDF) + hasta 20 tickets/facturas (JPG/PNG/WEBP/HEIC/PDF), **opcionales**: solo con el extracto, todos los gastos salen sin comprobante y se agrupan por categoría | Tabla de gastos con su comprobante (✅), varios comprobantes si es un reembolso agrupado (🔗) o "⚠️ Falta comprobante" |
 | F2 | Detectar lo que falta | El mismo resultado | Lista de gastos sin justificante + lista de comprobantes que no están en el banco (efectivo, otra tarjeta, ilegibles) |
 | F3 | Agrupar por categoría | El mismo resultado | Tabla y gráfico por categoría (total, nº de gastos, cuántos justificados, € sin justificar) + Excel descargable |
 | F5 | Conversar con lo extraído | Preguntas en lenguaje natural sobre el cuadre abierto («¿cuánto gasté en restauración?», «¿qué compré en la ferretería?») | Respuesta breve; si lleva un total, lo calcula Python y se muestran los gastos sumados |
 
 **Reglas de emparejamiento (en este orden):**
 
-1. **Uno a uno:** mismo importe (±1 céntimo) y fechas a ≤ *tolerancia* días (por defecto 4). Desempate: fecha más cercana y nombre más parecido.
+1. **Uno a uno**, en dos niveles. Para la fecha del comprobante vale la de emisión **o la de vencimiento** (un débito automático se cobra el día que vence la factura): cuenta la más cercana al banco. El nombre se compara con el **comercio leído y con el nombre del archivo** (sin tildes ni palabras como «factura», «pdf», «DB AUT»; una palabra de 3+ letras en común, como una sigla «UTE», basta). El concepto del banco incluye el **asunto** de las transferencias, si el extracto lo trae.
+   - **Seguro:** mismo importe (±1 céntimo) —o el del descuento de Uruguay— y fechas a ≤ *tolerancia* días (por defecto 4).
+   - **Por confirmar (🟡):** si no es seguro pero el nombre coincide y el importe es parecido (±10 %) y las fechas están a ≤ 35 días. Se empareja y el estado dice por qué («mismo nombre, el importe no coincide (diferencia de 34,16)»). Arriba del resultado, cada uno lleva **✅** (es correcto → «✅ Con comprobante · confirmado por usted») y **❌** (no lo es → el comprobante queda libre y nunca se vuelve a proponer para ese gasto), además de 👁️ para verlo. Las decisiones se guardan con el cuadre (`confirmados`, `rechazados`, con `clave_pareja`).
+   - Sin nombre en común, un importe o una fecha parecidos **no** bastan: no se adivina.
+   - Primero se reparten los confirmados, luego los seguros y al final los dudosos; desempate: fecha más cercana, nombre más parecido e importe exacto antes que con descuento o parecido.
+   **Uruguay (ajuste *País*):** los servicios pagados por **débito automático** tienen **2 puntos menos de IVA** (22 % → 20 % o 10 % → 8 %): el banco cobra el total **menos el 2 % de la base gravada** (lo que paga IVA, sin el IVA). Si el concepto del banco dice débito automático («DEBITO AUTOMATICO», «DEB. AUT.»…) **y** el comprobante es de *Suministros* o de *Telecomunicaciones y software*, también vale `total − 2 % × base_gravada` (±2 céntimos, por el redondeo del banco). Ejemplo: total 2.378,00 con 1.707,98 gravados → banco 2.343,84. Si la IA no ha leído la base, se supone todo gravado al 22 % o al 10 % (factura 1.220 → 1.200). Si hay otro comprobante con el importe exacto, gana ese. El estado indica «descuento IVA débito automático (importe)» y la fila lleva lo que cobró el banco. En España no se aplica (esas facturas quedan, como mucho, «por confirmar»). No se aplica a los reembolsos agrupados.
 2. **Reembolso agrupado:** a cada gasto que siga sin comprobante (del más antiguo al más reciente) se le busca una combinación de **2 o más** comprobantes sueltos que sumen **exactamente** su importe, con fecha entre *ventana* días antes del pago (por defecto 30) y *tolerancia* días después. Cada comprobante se usa una sola vez. Si existe más de una combinación válida, se elige una y se marca **"revisar"**.
 3. En la tabla, un reembolso agrupado ocupa **una fila por comprobante** con el mismo n.º de movimiento (*Mov.*), para que cada compra sume en **su** categoría.
 
-Extras de usabilidad: botón "Probar con datos de ejemplo", ajustes de días de tolerancia (0–10, por
-defecto 4) y de ventana de reembolsos (0–90, por defecto 30; 0 = no buscar), pestaña "Lo que ha leído la IA" para revisar, aviso de privacidad, y ventana para **ver cada comprobante** al pulsar sobre su nombre (en *Todos los gastos* y en *Qué falta*), con lo que ha leído la IA y el gasto del banco con el que va.
+Extras de usabilidad: botón "Probar con datos de ejemplo", ajuste de **País** (España o Uruguay; por defecto España), ajustes de días de tolerancia (0–10, por
+defecto 4) y de ventana de reembolsos (0–90, por defecto 30; 0 = no buscar), pestaña "Lectura IA" para revisar, aviso de privacidad, y ventana para **ver cada comprobante** al pulsar sobre su nombre (en *Movimientos* y en *Qué falta*), con lo que ha leído la IA y el gasto del banco con el que va.
 
 **Memoria en el navegador (IndexedDB, `almacen.py`):** lo que lee la IA se guarda en el navegador de quien usa la app, identificado por la huella (SHA-256) del contenido de cada archivo. Si se vuelve a subir un archivo ya leído (aunque cambie de nombre), se usa lo guardado y **no se llama a la IA**. También se guarda cada **cuadre** (extracto + comprobantes leídos) en un historial (F6) y los **archivos de los comprobantes** (fotos reducidas a ~300 KB, PDF tal cual) para verlos al abrir un cuadre. Los archivos viajan una vez en base64 hasta el navegador, se guardan como `Blob` (una sola vez aunque estén en varios cuadres) y **no vuelven al servidor**: los muestra un componente que los lee de IndexedDB. Al eliminar un cuadre o sustituir un ticket se borran los archivos que ya no usa ningún cuadre. Las **conversaciones** de *Pregunte* (F5) se guardan aparte, una por cuadre (para que preguntar no cambie su fecha en el historial), sin los datos del cuadre que van en las instrucciones; se borran con su cuadre. Las lecturas ilegibles no se guardan (para que la IA lo intente de nuevo) y nada pasa por un servidor propio. Si cambian los prompts o los esquemas, se sube `VERSION_LECTURA` y lo leído antes deja de usarse. Se puede borrar en *Ajustes*.
 
@@ -60,9 +65,9 @@ Compras online · Otros. Si la IA devuelve otra, se convierte en "Otros".
 
 | # | Funcionalidad | Estado | Dónde está | Criterios | Notas |
 |---|---|---|---|---|---|
-| F1 | Emparejar comprobantes con el extracto | ✅ Implementada | `cuadre.py`: `emparejar`, `agrupar_reembolsos`, `cuadrar` | CA1–CA3, CA7, CA13, CA15–CA17 | Reglas probadas en `tests/test_cuadre.py`; falta la prueba manual con la IA real |
+| F1 | Emparejar comprobantes con el extracto | ✅ Implementada | `cuadre.py`: `emparejar`, `agrupar_reembolsos`, `cuadrar` | CA1–CA3, CA7, CA13, CA15–CA17, CA27, CA28 | Reglas probadas en `tests/test_cuadre.py`; falta la prueba manual con la IA real |
 | F2 | Detectar lo que falta | ✅ Implementada | `app.py`: pestaña «⚠️ Qué falta» | CA4, CA5, CA10 | Reglas probadas en `tests/`; falta la prueba manual con la IA real |
-| F3 | Agrupar por categoría + Excel | ✅ Implementada | `cuadre.py` (agrupación), `app.py`: `a_excel`, pestaña «📊 Por categoría» | CA1, CA7 | Reglas probadas en `tests/`; falta la prueba manual con la IA real |
+| F3 | Agrupar por categoría + Excel | ✅ Implementada | `cuadre.py` (agrupación), `app.py`: `a_excel`, pestaña «📊 Categorías» | CA1, CA7 | Reglas probadas en `tests/`; falta la prueba manual con la IA real |
 | F6 | Historial de cuadres: abrir, ampliar con más comprobantes, renombrar, eliminar y empezar uno nuevo | ✅ Implementada | `almacen.py` (IndexedDB); `app.py`: barra lateral «Mis cuadres», `empezar`, `juntar_comprobantes` | CA19–CA22 | Probado en Chrome con los ejemplos (sin llamar a la IA) y en `tests/test_app.py` |
 | F4 | Enviar los gastos a un programa de contabilidad externo | 📝 Planeada | — | — | Anunciada en HITO_SEMANA2.md; sin especificar |
 | F5 | Conversar con lo extraído (RAG) | ✅ Implementada | `cuadre.py`: `consultar_gastos`; `app.py`: `datos_para_conversar`, `conversar`, pestaña «💬 Pregunte»; `almacen.py`: `guardar_conversacion` | CA23–CA26 | Reglas y conversación con modelo falso probadas en `tests/`; falta la prueba manual con la IA real |
@@ -72,24 +77,35 @@ Estados: 📝 Planeada · 🚧 En curso · ✅ Implementada (el código existe y
 
 ## 3. Interfaz (Streamlit, una página)
 
-0. **Barra lateral «🗂️ Mis cuadres»:** botón **➕ Nuevo cuadre** (página vacía) y la lista de cuadres guardados en el navegador, del más reciente al más antiguo, con su fecha y n.º de comprobantes. Al pulsar uno se abre.
-1. Título y una frase que explica qué hace.
-2. Desplegable "Cómo se usa y qué pasa con mis datos" (avisa de que los archivos van a Google y, si no responde, a Anthropic, y de que lo leído se guarda solo en este navegador).
-   Debajo, el cuadre abierto (📂 nombre, extracto, n.º de comprobantes), un campo para **cambiarle el nombre** y **🗑️ Eliminar este cuadre**; o «Nuevo cuadre».
-3. Botón **🧪 Probar con datos de ejemplo** (empieza un cuadre nuevo).
-4. Dos subidas de archivos en columnas: **Paso 1** extracto, **Paso 2** tickets y facturas. Con un cuadre abierto, el extracto es opcional (solo para cambiarlo) y el paso 2 es «Más tickets y facturas»; tras guardar, las subidas se vacían.
-5. Desplegable **Ajustes**: días de tolerancia, ventana de reembolsos y botón **🗑️ Borrar lo guardado en este navegador**.
-6. Botón principal **Cuadrar gastos** (cuadre nuevo) o **Añadir al cuadre** (cuadre abierto: suma los comprobantes nuevos a los que tenía; si uno se llama igual, manda el nuevo) con barra de progreso. El resultado se guarda en el historial.
-7. Resultado: 4 cifras resumen + pestañas *Por categoría*, *Todos los gastos*, *Qué falta*, *Lo que ha leído la IA*, *Pregunte* + botón **Descargar en Excel**.
-   En **💬 Pregunte**, un chat sobre el cuadre abierto (preguntas y respuestas en un recuadro con desplazamiento y el campo para escribir siempre debajo): cada respuesta con un total lleva un desplegable con los gastos que ha sumado la app. Botón **🗑️ Borrar la conversación**. La conversación se guarda en el navegador con su cuadre: al abrirlo desde *Mis cuadres* vuelve a salir; un cuadre nuevo empieza sin conversación.
+**Aspecto:** tema propio en `.streamlit/config.toml` (claro y oscuro, según el sistema; letra Plus Jakarta Sans,
+color principal verde azulado, bordes redondeados) y, en `estilo.py`, los estilos que el tema no cubre
+(cabecera, tarjetas de subida, cifras en tarjetas, pestañas como píldoras, barra lateral).
+Sin dependencias nuevas: solo CSS y HTML con `st.html`. Solo cambia la presentación, no los datos.
+**Principio: poca información a la vista.** Lo que no se usa a menudo (ayuda, renombrar, eliminar, ajustes,
+elegir modelo) va detrás de un botón o en la barra lateral, y no se repite la misma información dos veces.
+
+0. **Barra lateral:** logo y nombre de la app, botón **➕ Nuevo cuadre** y **🗂️ Mis cuadres** (del más reciente al más antiguo, con su fecha y n.º de comprobantes; al pulsar uno se abre). Abajo del todo, el desplegable **⚙️ Ajustes** (punto 5).
+1. **Página vacía (nuevo cuadre):** cabecera con el título y una frase. Debajo, «Nuevo cuadre» con, a la derecha, **🧪 Probar con datos de ejemplo** (empieza un cuadre nuevo) y **ℹ️** (panel con cómo se usa, cómo empareja y qué pasa con los datos: van a Google y, si no responde, a Anthropic; lo leído se guarda solo en este navegador).
+2. Dos tarjetas de subida en columnas: **1 · Extracto del banco** (CSV, Excel o PDF) y **2 · Tickets y facturas** (*opcional*; fotos o PDF, hasta 20). Debajo, el botón principal **✨ Cuadrar gastos**, a todo lo ancho, con una barra de progreso que dice con qué modelo se lee («Leyendo con Gemini (gemini-3.8-flash)…»).
+3. **Cuadre abierto:** sin la cabecera grande. Arriba, 📂 nombre y una línea con el extracto, el n.º de comprobantes y la fecha; a la derecha, **⬇️ Excel**, **✏️** (panel para **cambiarle el nombre** y **🗑️ Eliminar este cuadre**) e **ℹ️**.
+   Debajo, plegado, «➕ Añadir más tickets o cambiar el extracto»: las mismas dos tarjetas (el extracto, solo si se quiere cambiar) y el botón **➕ Añadir al cuadre** (suma los comprobantes nuevos a los que tenía; si uno se llama igual, manda el nuevo). Tras guardar, las subidas se vacían y el resultado se guarda en el historial.
+4. Justo después de cuadrar o añadir, un aviso breve que se va solo con el modelo que ha respondido de verdad, el n.º de llamadas y los segundos (p. ej. «🤖 Leído con Gemini (gemini-3.8-flash): 2 llamadas a la IA, 6 s.»), con aviso si Gemini no respondía y se usó Claude, o «No se ha llamado a la IA» si todo estaba guardado. Si el cuadre no tiene tickets, un aviso de que se pueden añadir.
+5. Desplegable **⚙️ Ajustes**, abajo del todo en la barra lateral: país (España o Uruguay, para el descuento de IVA por débito automático), días de tolerancia, ventana de reembolsos, botón **🔧 Avanzado** (abre un panel con el desplegable *Modelo de IA*: «Automático (recomendado)» = Gemini y, si falla, Claude; «Solo Gemini» o «Solo Claude», sin reserva; solo salen los que tienen su clave; los archivos ya leídos no se vuelven a leer al cambiarlo) y botón **🗑️ Borrar lo guardado en este navegador**.
+6. Resultado: 4 cifras en tarjetas (gastos, con comprobante, sin comprobante —con su importe— y comprobantes que no están en el banco); si hay emparejamientos «por confirmar», un recuadro **🟡 N por confirmar** con una línea por cada uno (gasto ↔ comprobante y por qué) y los botones 👁️ ✅ ❌ (ver §2); y pestañas en forma de píldora: *📊 Categorías* (tabla y gráfico), *📋 Movimientos* (una **tarjeta por movimiento**, del más reciente al más antiguo, ingresos incluidos: icono de su categoría, fecha y día de la semana, nombre —el del comercio si tiene un comprobante, si no el concepto del banco—, categoría, etiquetas de estado —n.º de comprobantes, «Falta comprobante», «Por confirmar», «Reembolso», «Descuento IVA», «Confirmado»— e importe, en verde los ingresos; al pulsarla se despliegan sus comprobantes con su icono —PDF o foto—, comercio, fecha, importe y un botón para **descargarlo**; al pulsar un comprobante se abre el visor; arriba, un filtro *Todos · Gastos · Sin comprobante · Ingresos*. Es un componente propio, `estilo.lista_movimientos` (`st.components.v2`); la descarga lee el archivo de IndexedDB en el navegador), *⚠️ Qué falta* (gastos sin justificante y comprobantes que no están en el banco), *💬 Pregunte* y *🔍 Lectura IA* (lo que ha leído la IA, para revisarlo). Si un reembolso agrupado se puede formar de más de una forma, un aviso de «revisar».
+7. En **💬 Pregunte**, un chat sobre el cuadre abierto (preguntas y respuestas en un recuadro con desplazamiento y el campo para escribir siempre debajo): mientras responde se indica el modelo («Buscando la respuesta con Gemini…») y debajo de cada respuesta, «🤖 Respondido con …»; cada respuesta con un total lleva un desplegable con los gastos que ha sumado la app. Botón **🗑️ Borrar la conversación**. La conversación se guarda en el navegador con su cuadre: al abrirlo desde *Mis cuadres* vuelve a salir; un cuadre nuevo empieza sin conversación.
 8. Al pulsar sobre un comprobante en una tabla se abre una ventana con la foto o el PDF, un botón para descargarlo y, debajo, su detalle. Si el cuadre se abrió del historial, el archivo sale de IndexedDB.
+9. Al pie, una línea: la IA puede equivocarse; revise los importes; la app no sustituye a la gestoría.
 
 ## 4. Pieza de IA
 
 - **Qué usa:** Pydantic AI con un `FallbackModel`: primero Gemini (`gemini-3.8-flash`) y, si falla
   (cuota, caída, clave), Claude de Anthropic (`claude-haiku-5-5`). `temperature=0`, **salida con
   esquema** (Pydantic `Movimiento` y `Comprobante`), con lectura multimodal de imágenes y PDF.
+  `Comprobante` lleva también `vencimiento` (el día que se cobra una factura de servicios) y `base_gravada`
+  (para el descuento de IVA de Uruguay); los dos tienen valor por defecto, y lo leído antes de añadirlos
+  (`VERSION_LECTURA` 1) se vuelve a leer.
   Basta con una de las dos claves (`GEMINI_API_KEY`, `ANTHROPIC_API_KEY`); con las dos, Claude es la reserva.
+  En *Ajustes → Avanzado* se puede elegir usar solo uno de los dos (`obtener_modelo(eleccion)`); por defecto, automático.
 - **Por qué:** hace falta leer fotos y PDF de formatos muy distintos. Un OCR clásico saca el texto,
   pero no sabe cuál es el total ni la fecha. Gemini es multimodal, devuelve datos estructurados y
   tiene capa gratuita sin GPU.
@@ -120,7 +136,7 @@ Estados: 📝 Planeada · 🚧 En curso · ✅ Implementada (el código existe y
 | Foto HEIC que no se ha podido convertir y Gemini falla | Claude no lee HEIC: mismo mensaje que el archivo dañado |
 | Error del servidor (5xx) / sin red | Mensaje de probar en unos minutos |
 | La IA se salta un archivo | Aparece como "No se ha podido leer" en *Qué falta* |
-| La IA lee mal un importe | No cuadrará: el ticket y el gasto aparecen en *Qué falta*; el usuario lo ve en *Lo que ha leído la IA* |
+| La IA lee mal un importe | No cuadrará: el ticket y el gasto aparecen en *Qué falta*; el usuario lo ve en *Lectura IA* |
 | Falla la IA en la conversación | Los mismos mensajes que arriba (con un reintento si es 429); la pregunta no se guarda y se puede repetir |
 
 ## 5. Casos límite y criterios de aceptación
@@ -128,7 +144,7 @@ Estados: 📝 Planeada · 🚧 En curso · ✅ Implementada (el código existe y
 Datos de prueba: `ejemplos/` (inventados, regenerables con `python ejemplos/generar_ejemplos.py`).
 
 **Pruebas automáticas** (`python -m unittest discover -s tests -v`, sin llamar a la IA): cubren
-CA1–CA13, CA15–CA22, CA23, CA24 y CA26 con lo que la IA *debería* leer de los ejemplos (`tests/datos_ejemplo.py`) y
+CA1–CA13, CA15–CA22, CA23, CA24, CA26, CA27 y CA28 con lo que la IA *debería* leer de los ejemplos (`tests/datos_ejemplo.py`) y
 modelos de IA falsos para los errores y el paso a Claude. Quedan para la prueba manual con la app: que la IA lea
 bien los ejemplos, CA14, CA25 y que las respuestas de la conversación sean correctas con la IA real. Cada prueba lleva en su nombre el ID del criterio (`test_CA7_…`).
 GitHub las pasa solas en cada push y pull request (`.github/workflows/pruebas.yml`), sin claves.
@@ -142,12 +158,12 @@ GitHub las pasa solas en cada push y pull request (`.github/workflows/pruebas.ym
 | CA5 | Pago en efectivo | Ticket restaurante 27,40 € | En *Qué falta* → "No aparece en el extracto" |
 | CA6 | Ingresos | Transferencia recibida +1.200 € | No aparece en la tabla de gastos |
 | CA7 | Factura PDF | Factura de luz 68,45 € (emitida el 12/10, cargo el 14/10) | Emparejada, categoría Suministros |
-| CA8 | Sin archivos | Pulsar "Cuadrar" sin nada | Aviso amarillo; no se llama a la IA |
+| CA8 | Sin archivos / solo extracto | Pulsar "Cuadrar" sin nada; después, solo con el extracto | Sin nada: aviso amarillo y no se llama a la IA. Solo con el extracto: se cuadra (los tickets son opcionales), todos los gastos «Falta comprobante», por categoría con las del extracto, y un aviso de que se pueden añadir después |
 | CA9 | Demasiados archivos | 21 comprobantes o archivo > 8 MB | Aviso con qué hacer; no se llama a la IA |
 | CA10 | Foto ilegible / no es un ticket | Foto de un paisaje | Aparece como "No se ha podido leer" |
 | CA11 | Sin clave | Borrar los dos secretos (`GEMINI_API_KEY` y `ANTHROPIC_API_KEY`) | Mensaje rojo; la app no se rompe |
 | CA12 | Cuota agotada | 429 repetido en el último modelo | Reintento + mensaje claro; la app no se rompe |
-| CA13 | Tolerancia 0 | Ajuste a 0 días con el ejemplo | Solo cuadran los gastos con la misma fecha en ticket y banco; no se llama de nuevo a la IA |
+| CA13 | Tolerancia 0 | Ajuste a 0 días con el ejemplo | Solo son seguros los gastos con la misma fecha en ticket y banco; la gasolinera (1 día) queda «por confirmar» por el nombre; no se llama de nuevo a la IA |
 | CA15 | Reembolso agrupado | Transferencia a Marta 51,65 € (28/10) + tickets ferretería 23,45 + frutería 15,70 + copistería 12,50 | 🔗 3 filas con el mismo *Mov.*, cada una en su categoría; suman 51,65 € |
 | CA16 | Reembolso ambiguo | Pago de 30 € con tickets de 10, 20, 15 y 15 € | Se agrupa una combinación y aparece el aviso «revisar» |
 | CA17 | Sin búsqueda de reembolsos | Ventana = 0 con el ejemplo | La transferencia queda "Falta comprobante" y los 3 tickets como sueltos |
@@ -156,20 +172,25 @@ GitHub las pasa solas en cada push y pull request (`.github/workflows/pruebas.ym
 | CA20 | Historial | Cuadrar el ejemplo, recargar la página y abrirlo en *Mis cuadres* | Aparece con su fecha; al abrirlo, el mismo resultado sin llamar a la IA. *Nuevo cuadre* deja la página vacía |
 | CA22 | Ver los archivos de un cuadre guardado | Cuadrar el ejemplo, recargar la página, abrir el cuadre y pulsar un ticket y un PDF | Se ven la foto y el PDF con su botón de descarga; al eliminar el cuadre se borran sus archivos (si ningún otro cuadre los usa) |
 | CA21 | Ampliar un cuadre | Cuadre con extracto + 3 tickets; abrirlo y subir 2 tickets más → «Añadir al cuadre» | El cuadre tiene 5 comprobantes y se recalcula; el extracto se mantiene; sin archivos nuevos → aviso |
-| CA23 | Pregunta con un total | Ejemplo → *Pregunte*: «¿Cuánto he gastado en restauración?» | 25,60 € (2 gastos), igual que en *Por categoría*; el desplegable muestra las 2 filas |
+| CA23 | Pregunta con un total | Ejemplo → *Pregunte*: «¿Cuánto he gastado en restauración?» | 25,60 € (2 gastos), igual que en *Categorías*; el desplegable muestra las 2 filas |
 | CA24 | Conversación seguida | Tras CA23: «¿Y cuáles no tienen ticket?» | Entiende la pregunta anterior; abrir otro cuadre o *Nuevo cuadre* vacía la conversación. Sin clave: mensaje rojo |
 | CA25 | Pregunta sin respuesta en los datos | «¿Cuánto gasté en enero?» o «¿Es deducible la gasolina?» | Dice que no está en el cuadre o que no puede aconsejar; no inventa importes |
 | CA26 | Conversación guardada | Hacer 2 preguntas, recargar la página y abrir el cuadre en *Mis cuadres* | Salen las 2 preguntas con sus respuestas y se puede seguir; al eliminar el cuadre o *Borrar la conversación* desaparece |
+| CA27 | Uruguay: débito automático con 2 puntos menos de IVA | País «Uruguay»; banco «DEBITO AUTOMATICO ELECTRICA DEL SUR» −1.200; factura de luz de 1.220 (IVA 22 %) | Emparejados, con «descuento IVA débito automático (20,00)». Con IVA 10 %: 1.100 → 1.080. En España, sin «débito automático» en el concepto o si no es un servicio: no hay descuento y queda «por confirmar» (mismo nombre, importe a menos del 10 %). Si hay una factura de 1.200 exactos, gana esa |
+| CA28 | Facturas de servicios y «por confirmar» | Extracto de Uruguay: luz 3.622,00 cobrada el 02/09 (factura emitida el 24/08, vence el 02/09); agua 2.343,84 y teléfono 2.102,95 (facturas de 2.378,00 y 2.138,00 con 1.707,98 y 1.752,42 gravados); archivos «UTI - Factura.pdf»… | Con País «Uruguay»: los tres seguros (la luz, por el vencimiento; agua y teléfono, con descuento 34,16 y 35,05). En España: agua y teléfono «🟡 Por confirmar»; ✅ los deja confirmados y ❌ los suelta. Sin vencimiento leído, la luz queda por confirmar por el nombre del archivo. Una foto llamada como el asunto de una transferencia se propone por confirmar. Sin nombre en común: «Falta comprobante» |
 | CA14 | Usuario no técnico | Persona que no conoce la app | Con el ejemplo, entiende qué le falta en menos de 2 minutos sin ayuda |
 
 ## 6. Prompts reutilizables
 
 ### 6.1 Prompts de la app (en `app.py`)
 
-- `PROMPT_EXTRACTO`: rol de asistente contable; devolver todos los movimientos; fecha AAAA-MM-DD;
+- `PROMPT_EXTRACTO`: rol de asistente contable; extracto de cualquier banco o país; devolver todos los
+  movimientos; fecha AAAA-MM-DD; el concepto con el **asunto** o beneficiario detrás (« - »), si lo hay;
   gastos en negativo; una categoría de la lista; no inventar ni incluir saldos.
-- `PROMPT_COMPROBANTES`: un elemento por archivo con su nombre exacto; el TOTAL con IVA (no
-  subtotal ni efectivo entregado); `legible=false` si hay dudas, en lugar de inventar.
+- `PROMPT_COMPROBANTES`: un elemento por archivo con su nombre exacto; el comercio con su **nombre
+  comercial corto o sigla** (como saldría en el banco), no la razón social; fecha de emisión y, si la hay,
+  de **vencimiento**; el TOTAL con IVA (no subtotal ni efectivo entregado); la **base gravada** sin IVA (0 si
+  no aparece); `legible=false` si hay dudas, en lugar de inventar.
 
 - `PROMPT_CONVERSACION` (F5): responder solo con los datos del cuadre (van debajo, en CSV); para totales y
   recuentos usar **siempre** la herramienta `sumar_gastos`; un reembolso agrupado es un solo pago; si no está en

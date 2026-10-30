@@ -21,7 +21,7 @@ La especificación completa está en [ESPECIFICACION.md](ESPECIFICACION.md). Res
 
 | # | Funcionalidad | Entrada | Salida |
 |---|---|---|---|
-| F1 | Emparejar comprobantes con el extracto | Extracto (CSV/XLSX/PDF) + hasta 20 tickets o facturas (JPG/PNG/WEBP/HEIC/PDF) | Cada gasto con su comprobante (✅), varios comprobantes si es un reembolso (🔗) o «⚠️ Falta comprobante» |
+| F1 | Emparejar comprobantes con el extracto | Extracto (CSV/XLSX/PDF) + hasta 20 tickets o facturas (JPG/PNG/WEBP/HEIC/PDF), opcionales | Cada gasto con su comprobante (✅), varios comprobantes si es un reembolso (🔗) o «⚠️ Falta comprobante» |
 | F2 | Detectar lo que falta | El resultado de F1 | Gastos sin justificante + comprobantes que no están en el banco (efectivo, otra tarjeta, ilegibles) |
 | F3 | Agrupar por categoría | El resultado de F1 | Tabla y gráfico por categoría + Excel descargable |
 
@@ -40,12 +40,14 @@ La especificación completa está en [ESPECIFICACION.md](ESPECIFICACION.md). Res
 | CA16 | Reembolso con varias combinaciones posibles | Se agrupa una y aparece el aviso «revisar» |
 | CA19 | Volver a subir archivos ya leídos | No se llama a la IA: se usa lo guardado en el navegador |
 | CA21 | Abrir un cuadre del historial y añadirle tickets | Se suman a los que tenía y se recalcula |
+| CA27 | Uruguay: factura de luz de 1.220 pagada por débito automático (el banco cobra 1.200) | Emparejados con «descuento IVA débito automático (20,00)» |
+| CA28 | Factura de agua de 2.378,00 (1.707,98 gravados) cobrada el día que vence por 2.343,84 | En Uruguay, emparejada con descuento (34,16); en España, «🟡 Por confirmar» con botones ✅ / ❌ |
 
 ## Cómo se usa
 
 1. Descarga de tu banco los movimientos del mes (CSV, Excel o PDF) y súbelos en el **Paso 1**.
-2. Sube las fotos de los tickets y las facturas en PDF en el **Paso 2** (máx. 20).
-3. Pulsa **Cuadrar gastos**, revisa las pestañas y descarga el Excel.
+2. Sube las fotos de los tickets y las facturas en PDF en el **Paso 2** (máx. 20). Es opcional: puedes cuadrar solo con el extracto y añadirlos después.
+3. Pulsa **✨ Cuadrar gastos**, revisa las pestañas y descarga el Excel.
 
 ¿Sin datos a mano? Pulsa **🧪 Probar con datos de ejemplo**: todos son inventados.
 
@@ -53,9 +55,9 @@ La especificación completa está en [ESPECIFICACION.md](ESPECIFICACION.md). Res
 
 | Pieza | Detalle |
 |---|---|
-| Interfaz | Streamlit (una página) |
+| Interfaz | Streamlit (una página) con tema propio claro/oscuro (`.streamlit/config.toml`) y estilos en `estilo.py`: cabecera, tarjetas, pestañas en píldora y lo secundario detrás de botones |
 | Lectura (IA) | Pydantic AI: Gemini `gemini-3.8-flash` y, si falla, Claude `claude-haiku-5-5` de reserva (`FallbackModel`); multimodal, salida con esquema; 5 comprobantes por llamada |
-| Cuadre (Python) | `cuadre.py`: (1) uno a uno: mismo importe (±1 céntimo) y fecha a ≤ 4 días; (2) reembolsos: varios tickets anteriores que suman exactamente un pago (p. ej. una transferencia a quien adelantó las compras) |
+| Cuadre (Python) | `cuadre.py`: (1) uno a uno: mismo importe (±1 céntimo) y fecha de emisión o de vencimiento a ≤ 4 días; si no es seguro pero el nombre (del comercio o del archivo) coincide, se empareja «por confirmar» y el usuario lo confirma o descarta; (2) reembolsos: varios tickets anteriores que suman exactamente un pago (p. ej. una transferencia a quien adelantó las compras) |
 | Errores | Mensajes claros para cuota agotada (con reintento), clave, archivos dañados, demasiado grandes o ilegibles |
 | Clave | En *Settings → Secrets* de Streamlit, nunca en el código |
 
@@ -96,7 +98,7 @@ Para regenerar los datos de ejemplo: `python ejemplos/generar_ejemplos.py`.
 
 ## Limitaciones
 
-- La IA puede leer mal un importe: revisa la pestaña *Lo que ha leído la IA*.
+- La IA puede leer mal un importe: revisa la pestaña *Lectura IA*.
 - No empareja un ticket pagado en varios cargos (pagos fraccionados).
 - En reembolsos, si varias combinaciones de tickets suman lo mismo, elige una y avisa para revisar.
 - No es contabilidad oficial ni decide qué es deducible.

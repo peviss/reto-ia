@@ -18,6 +18,7 @@ texto visible: en español, trato de "usted", sin jerga informática ni contable
 |---|---|---|
 | `app.py` | Interfaz + llamadas a la IA (Gemini, con Claude de reserva) para **leer** documentos y **conversar** sobre lo extraído | La IA solo extrae datos con esquema JSON (Pydantic). Nunca decide emparejamientos. En la conversación no suma: llama a `sumar_gastos` (`cuadre.consultar_gastos`). |
 | `almacen.py` | Guarda en el navegador (IndexedDB) lo leído por la IA, el historial de cuadres, los archivos de los comprobantes y las conversaciones, con un componente `st.components.v2` | Los archivos no vuelven nunca a Python: los muestra el visor desde IndexedDB. Si cambias un prompt o un esquema, sube `VERSION_LECTURA`. |
+| `estilo.py` + `.streamlit/config.toml` | Aspecto: tema claro/oscuro, letra y colores (config), CSS/HTML que el tema no cubre y la lista de movimientos en tarjetas (componente `st.components.v2`) | Solo presentación, sin dependencias nuevas. Los bloques se localizan por su `key` (clase `st-key-<key>`). |
 | `cuadre.py` | **Empareja** (uno a uno y reembolsos agrupados) y **agrupa** con reglas fijas | Python puro, sin IA ni Streamlit, para poder probarlo y explicarlo. |
 | `ejemplos/` | Datos inventados + `generar_ejemplos.py` | Si añades un caso, regenera y actualiza ESPECIFICACION §5. |
 

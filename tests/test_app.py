@@ -43,10 +43,10 @@ class ModeloFalso(FunctionModel):
     Si se le acaban los errores, responde con un comprobante leído.
     """
 
-    def __init__(self, *fallos):
+    def __init__(self, *fallos, nombre=None):
         self.fallos = list(fallos)
         self.llamadas = 0
-        super().__init__(self.responder)
+        super().__init__(self.responder, model_name=nombre)  # nombre: para imitar a Gemini o a Claude
 
     def responder(self, _mensajes, info):
         self.llamadas += 1
@@ -61,7 +61,8 @@ class Validacion(unittest.TestCase):
 
     def test_CA8_sin_archivos(self):
         self.assertIn("Falta el extracto", app.validar(None, []))
-        self.assertIn("Faltan los tickets", app.validar(archivo("e.csv"), []))
+        # Los tickets son opcionales: con el extracto basta
+        self.assertIsNone(app.validar(archivo("e.csv"), []))
 
     def test_CA9_demasiados_comprobantes(self):
         aviso = app.validar(archivo("e.csv"), [archivo(f"t{i}.jpg") for i in range(21)])
@@ -142,6 +143,7 @@ class Conversacion(unittest.TestCase):
         self.assertIsNone(error)
         self.assertEqual(turno["respuesta"], "Total: 25.6 €")
         self.assertEqual(turno["consultas"][0]["numero_de_gastos"], 2)
+        self.assertIn("modelo", turno)  # se enseña debajo de la respuesta
 
     def test_CA24_recuerda_las_preguntas_anteriores(self):
         modelo = ModeloQueConsulta({"justificante": "sin"})
@@ -200,6 +202,48 @@ class ModeloDeReserva(unittest.TestCase):
             self.assertEqual(app.obtener_modelo().model_name, app.MODELO_RESERVA)
         with secretos({"GEMINI_API_KEY": "falsa", "ANTHROPIC_API_KEY": "falsa"}):
             self.assertIsInstance(app.obtener_modelo(), FallbackModel)
+
+    def test_elegir_un_modelo_en_avanzado(self):
+        solo_gemini, solo_claude = list(app.OPCIONES_MODELO)[1:]
+        with mock.patch.object(app.st, "secrets", {"GEMINI_API_KEY": "falsa", "ANTHROPIC_API_KEY": "falsa"}):
+            self.assertEqual(app.opciones_modelo(), list(app.OPCIONES_MODELO))
+            self.assertEqual(app.obtener_modelo(solo_gemini).model_name, app.MODELO_GEMINI)
+            self.assertEqual(app.obtener_modelo(solo_claude).model_name, app.MODELO_RESERVA)
+            self.assertIsInstance(app.obtener_modelo(app.AUTOMATICO), FallbackModel)
+        with mock.patch.object(app.st, "secrets", {"GEMINI_API_KEY": "falsa"}):
+            # Sin clave de Anthropic no se ofrece Claude, y si se pide igualmente no hay modelo
+            self.assertEqual(app.opciones_modelo(), [app.AUTOMATICO, solo_gemini])
+            self.assertIsNone(app.obtener_modelo(solo_claude))
+
+
+class QueModeloSeUsa(unittest.TestCase):
+    """La pantalla dice con qué modelo se lee y cuál ha respondido de verdad."""
+
+    def llamar(self, modelo):
+        sesion = {}
+        with mock.patch.object(app.st, "session_state", sesion), mock.patch.object(app.st, "info"):
+            app.llamar_ia(modelo, ["hola"], "prompt", app.Comprobante)
+        return sesion["llamadas_ia"]
+
+    def test_nombres_para_el_usuario(self):
+        self.assertEqual(app.nombre_modelo("gemini-3.8-flash"), "Gemini (gemini-3.8-flash)")
+        self.assertEqual(app.nombre_modelo("claude-haiku-5-5"), "Claude (claude-haiku-5-5)")
+
+    def test_apunta_el_modelo_que_responde(self):
+        llamadas = self.llamar(ModeloFalso(nombre="gemini-falso"))
+        self.assertEqual([(l["principal"], l["modelo"]) for l in llamadas],
+                         [("Gemini (gemini-falso)", "Gemini (gemini-falso)")])
+        self.assertIn("Leído con Gemini (gemini-falso): 1 llamada", app.resumen_llamadas(llamadas))
+
+    def test_avisa_si_responde_el_de_reserva(self):
+        gemini, claude = ModeloFalso(error_api(429), nombre="gemini-falso"), ModeloFalso(nombre="claude-falso")
+        llamadas = self.llamar(FallbackModel(gemini, claude))
+        resumen = app.resumen_llamadas(llamadas)
+        self.assertIn("Leído con Claude (claude-falso)", resumen)
+        self.assertIn("Gemini (gemini-falso) no respondía", resumen)
+
+    def test_sin_llamadas_lo_dice(self):
+        self.assertIn("No se ha llamado a la IA", app.resumen_llamadas([]))
 
 
 class LoGuardadoEnElNavegador(unittest.TestCase):

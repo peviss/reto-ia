@@ -19,9 +19,9 @@ MOVIMIENTOS = [
 ]
 
 
-def comprobante(archivo, comercio, fecha, total, categoria, legible=True):
+def comprobante(archivo, comercio, fecha, total, categoria, legible=True, vencimiento="", base_gravada=0.0):
     return {"archivo": archivo, "comercio": comercio, "fecha": fecha, "total": total,
-            "categoria": categoria, "legible": legible}
+            "categoria": categoria, "legible": legible, "vencimiento": vencimiento, "base_gravada": base_gravada}
 
 
 COMPROBANTES = [

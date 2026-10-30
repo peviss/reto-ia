@@ -7,7 +7,7 @@ Ejecutar:  python -m unittest discover -s tests -v
 import copy
 import unittest
 
-from cuadre import consultar_gastos, cuadrar
+from cuadre import clave_pareja, consultar_gastos, cuadrar
 from datos_ejemplo import COMPROBANTES, MOVIMIENTOS, comprobante
 
 
@@ -74,8 +74,8 @@ class CriteriosDeAceptacion(unittest.TestCase):
 
     def test_CA13_tolerancia_cero(self):
         gastos, _, _ = cuadrar_ejemplo(tolerancia_dias=0)
-        # La gasolinera (ticket 05/10, banco 06/10) ya no cuadra; la cafetería (misma fecha) sí
-        self.assertEqual(fila(gastos, "GASOLINERA")["Estado"].tolist(), ["⚠️ Falta comprobante"])
+        # La gasolinera (ticket 05/10, banco 06/10) ya no es segura: mismo nombre, queda por confirmar
+        self.assertTrue(fila(gastos, "GASOLINERA")["Estado"].iloc[0].startswith("🟡 Por confirmar"))
         self.assertEqual(fila(gastos, "CAFETERIA", "2026-10-10")["Comprobante"].tolist(), ["ticket_cafeteria.jpg"])
 
     def test_CA15_reembolso_agrupado(self):
@@ -140,6 +140,14 @@ class CasosLimite(unittest.TestCase):
         self.assertTrue(gastos.empty)
         self.assertTrue(resumen.empty)
 
+    def test_CA8_solo_con_el_extracto(self):
+        # Sin tickets: todos los gastos salen sin comprobante, pero se agrupan por categoría
+        gastos, resumen, sueltos = cuadrar(copy.deepcopy(MOVIMIENTOS), [])
+        self.assertEqual(gastos["Mov."].nunique(), 10)
+        self.assertEqual(set(gastos["Estado"]), {"⚠️ Falta comprobante"})
+        self.assertAlmostEqual(resumen["Total (€)"].sum(), gastos["Importe (€)"].sum(), places=2)
+        self.assertTrue(sueltos.empty)
+
     def test_categoria_inventada_pasa_a_otros(self):
         movimientos = [{"fecha": "2026-10-01", "concepto": "X", "importe": -5.0, "categoria": "Ocio"}]
         gastos, _, _ = cuadrar(movimientos, [])
@@ -149,6 +157,126 @@ class CasosLimite(unittest.TestCase):
         movimientos = [{"fecha": "2026-10-01", "concepto": "COMPRA TIENDA", "importe": -9.99, "categoria": "Otros"}]
         gastos, _, _ = cuadrar(movimientos, [comprobante("t.jpg", "Tienda", "", 9.99, "Otros")])
         self.assertEqual(gastos["Comprobante"].tolist(), ["t.jpg"])
+
+
+def debito(concepto, importe, categoria="Suministros (luz, agua, gas)"):
+    """Un gasto del extracto del 10/10 (para las pruebas de Uruguay)."""
+    return [{"fecha": "2026-10-10", "concepto": concepto, "importe": importe, "categoria": categoria}]
+
+
+class DescuentoIvaUruguay(unittest.TestCase):
+    """Uruguay: un servicio pagado por débito automático tiene 2 puntos menos de IVA (CA27)."""
+
+    def test_CA27_iva_basico(self):
+        # 1.220 = 1.000 + 22 % → con el 20 %, el banco cobra 1.200
+        factura = comprobante("luz.pdf", "ELECTRICA DEL SUR", "2026-10-08", 1220.00, "Suministros (luz, agua, gas)")
+        gastos, _, sueltos = cuadrar(debito("DEBITO AUTOMATICO ELECTRICA DEL SUR", -1200.00), [factura], pais="Uruguay")
+        self.assertEqual(gastos["Comprobante"].tolist(), ["luz.pdf"])
+        self.assertIn("descuento IVA débito automático (20,00)", gastos["Estado"][0])
+        self.assertEqual(gastos["Importe (€)"].tolist(), [1200.00])  # lo que se pagó de verdad
+        self.assertTrue(sueltos.empty)
+
+    def test_CA27_iva_minimo_y_concepto_abreviado(self):
+        # 1.100 = 1.000 + 10 % → con el 8 %, el banco cobra 1.080
+        factura = comprobante("agua.pdf", "AGUAS DEL LLANO", "2026-10-08", 1100.00, "Suministros (luz, agua, gas)")
+        gastos, _, _ = cuadrar(debito("DEB. AUT. AGUAS DEL LLANO", -1080.00), [factura], pais="Uruguay")
+        self.assertEqual(gastos["Comprobante"].tolist(), ["agua.pdf"])
+
+    def test_CA27_en_espana_no_se_aplica(self):
+        factura = comprobante("luz.pdf", "ELECTRICA DEL SUR", "2026-10-08", 1220.00, "Suministros (luz, agua, gas)")
+        gastos, _, _ = cuadrar(debito("DEBITO AUTOMATICO ELECTRICA DEL SUR", -1200.00), [factura])
+        # Sin el descuento no es seguro; por el nombre, queda para que el usuario lo confirme
+        self.assertTrue(gastos["Estado"][0].startswith("🟡 Por confirmar"))
+
+    def test_CA27_sin_debito_automatico_no_se_aplica(self):
+        factura = comprobante("luz.pdf", "ELECTRICA DEL SUR", "2026-10-08", 1220.00, "Suministros (luz, agua, gas)")
+        gastos, _, _ = cuadrar(debito("COMPRA TARJ. 4444 ELECTRICA DEL SUR", -1200.00), [factura], pais="Uruguay")
+        self.assertTrue(gastos["Estado"][0].startswith("🟡 Por confirmar"))
+
+    def test_CA27_solo_servicios(self):
+        ticket = comprobante("cena.jpg", "RESTAURANTE EL MOLINO", "2026-10-08", 1220.00, "Restauración")
+        gastos, _, _ = cuadrar(debito("DEBITO AUTOMATICO RESTAURANTE", -1200.00, "Restauración"), [ticket], pais="Uruguay")
+        self.assertTrue(gastos["Estado"][0].startswith("🟡 Por confirmar"))
+
+    def test_CA27_gana_el_importe_exacto(self):
+        exacta = comprobante("internet.pdf", "RED INVENTADA", "2026-10-08", 1200.00, "Telecomunicaciones y software")
+        con_descuento = comprobante("luz.pdf", "RED INVENTADA", "2026-10-08", 1220.00, "Suministros (luz, agua, gas)")
+        gastos, _, sueltos = cuadrar(debito("DEBITO AUTOMATICO RED INVENTADA", -1200.00),
+                                     [con_descuento, exacta], pais="Uruguay")
+        self.assertEqual(gastos["Comprobante"].tolist(), ["internet.pdf"])
+        self.assertEqual(gastos["Estado"].tolist(), ["✅ Con comprobante"])
+        self.assertEqual(sueltos["Archivo"].tolist(), ["luz.pdf"])
+
+
+
+def gasto(fecha, concepto, importe, categoria="Suministros (luz, agua, gas)"):
+    return {"fecha": fecha, "concepto": concepto, "importe": importe, "categoria": categoria}
+
+
+# Un extracto y facturas como los de un banco de Uruguay (nombres inventados, importes reales de ejemplo):
+# las facturas de servicios se cobran el día que vencen y el comercio leído puede ser el nombre legal largo
+LUZ = comprobante("UTI - Factura.pdf", "Usinas y Transmisiones Inventadas", "2026-08-24", 3622.00,
+                  "Suministros (luz, agua, gas)", vencimiento="2026-09-02", base_gravada=2698.96)
+AGUA = comprobante("OSI - Factura.pdf", "Obras Sanitarias Inventadas", "2026-09-04", 2378.00,
+                   "Suministros (luz, agua, gas)", vencimiento="2026-09-18", base_gravada=1707.98)
+TELEFONO = comprobante("TELCO - Factura.pdf", "TELCO", "2026-09-03", 2138.00,
+                       "Telecomunicaciones y software", vencimiento="2026-09-18", base_gravada=1752.42)
+EXTRACTO_UY = [
+    gasto("2026-09-02", "UTI - DEBITO AUTOMATICO", -3622.00),
+    gasto("2026-09-18", "OSI - DB AUT", -2343.84),
+    gasto("2026-09-18", "TELCO - TELEFONIA FIJA DB. AUT", -2102.95, "Telecomunicaciones y software"),
+]
+
+
+class FacturasDeServicios(unittest.TestCase):
+    """Fecha de vencimiento, nombre del archivo, descuento sobre la base y «por confirmar» (CA28)."""
+
+    def estados(self, movimientos, comprobantes, **ajustes):
+        gastos, _, sueltos = cuadrar(copy.deepcopy(movimientos), copy.deepcopy(comprobantes), **ajustes)
+        return dict(zip(gastos["Concepto"], gastos["Estado"])), gastos, sueltos
+
+    def test_CA28_uruguay_todo_seguro(self):
+        estados, gastos, sueltos = self.estados(EXTRACTO_UY, [LUZ, AGUA, TELEFONO], pais="Uruguay")
+        # Luz: mismo importe, cobrada el día que vence (no el de emisión, 9 días antes)
+        self.assertEqual(estados["UTI - DEBITO AUTOMATICO"], "✅ Con comprobante")
+        # Agua y teléfono: el total menos el 2 % de la base gravada
+        self.assertEqual(estados["OSI - DB AUT"], "✅ Con comprobante · descuento IVA débito automático (34,16)")
+        self.assertEqual(estados["TELCO - TELEFONIA FIJA DB. AUT"],
+                         "✅ Con comprobante · descuento IVA débito automático (35,05)")
+        self.assertTrue(sueltos.empty)
+
+    def test_CA28_en_espana_quedan_por_confirmar(self):
+        estados, _, _ = self.estados(EXTRACTO_UY, [LUZ, AGUA, TELEFONO])
+        self.assertEqual(estados["UTI - DEBITO AUTOMATICO"], "✅ Con comprobante")
+        self.assertEqual(estados["OSI - DB AUT"],
+                         "🟡 Por confirmar: mismo nombre, el importe no coincide (diferencia de 34,16)")
+
+    def test_CA28_sin_vencimiento_por_el_nombre_del_archivo(self):
+        # Una lectura sin vencimiento: 9 días entre fechas; el comercio no se parece, el archivo sí
+        luz = {**LUZ, "vencimiento": ""}
+        estados, _, _ = self.estados(EXTRACTO_UY[:1], [luz])
+        self.assertEqual(estados["UTI - DEBITO AUTOMATICO"], "🟡 Por confirmar: mismo nombre, 9 días entre las fechas")
+
+    def test_CA28_confirmar_y_descartar(self):
+        clave = clave_pareja("2026-09-18", "OSI - DB AUT", -2343.84, "OSI - Factura.pdf")
+        estados, _, _ = self.estados(EXTRACTO_UY[1:2], [AGUA], confirmados={clave})
+        self.assertEqual(estados["OSI - DB AUT"], "✅ Con comprobante · confirmado por usted")
+        estados, _, sueltos = self.estados(EXTRACTO_UY[1:2], [AGUA], rechazados={clave})
+        self.assertEqual(estados["OSI - DB AUT"], "⚠️ Falta comprobante")
+        self.assertEqual(sueltos["Archivo"].tolist(), ["OSI - Factura.pdf"])
+
+    def test_CA28_transferencia_por_el_asunto(self):
+        # La foto se llama como el asunto de la transferencia, y la compra fue 13 días antes
+        foto = comprobante("bolsas servilletas.jpg", "Distribuidora Inventada", "2026-09-15", 1068.00, "Material y oficina")
+        movimiento = gasto("2026-09-28", "TRF. E-BROU OTROS - PROVEEDOR INVENTADO - Bolsas Servilletas", -1068.00)
+        estados, _, _ = self.estados([movimiento], [foto])
+        self.assertTrue(estados[movimiento["concepto"]].startswith("🟡 Por confirmar: mismo nombre, 13 días"))
+
+    def test_CA28_sin_nombre_parecido_no_se_empareja(self):
+        # Importe parecido y fechas cercanas, pero nada en común: no se adivina
+        ticket = comprobante("ticket.jpg", "Ferreteria Inventada", "2026-09-18", 2300.00, "Material y oficina")
+        estados, _, _ = self.estados(EXTRACTO_UY[1:2], [ticket])
+        self.assertEqual(estados["OSI - DB AUT"], "⚠️ Falta comprobante")
 
 
 if __name__ == "__main__":

@@ -190,25 +190,50 @@ def contenido_extracto(archivo):
 
 # ---------- Llamadas a la IA ----------
 
-def obtener_modelo():
-    """Prepara Gemini y, de reserva, Claude con las claves de los secretos.
+# Lo que se puede elegir en Ajustes → Avanzado. Cada opción dice qué clave necesita (None = la que haya).
+AUTOMATICO = "Automático (recomendado)"
+OPCIONES_MODELO = {
+    AUTOMATICO: None,  # Gemini y, si falla, Claude
+    f"Solo Gemini · {MODELO_GEMINI}": "GEMINI_API_KEY",
+    f"Solo Claude · {MODELO_RESERVA}": "ANTHROPIC_API_KEY",
+}
 
-    Basta con una de las dos claves. Con las dos, si Gemini falla (cuota, caída…) se usa Claude.
-    Devuelve None si no hay ninguna.
-    """
-    modelos = []
-    for nombre_clave, crear in [
-        ("GEMINI_API_KEY", lambda c: GoogleModel(MODELO_GEMINI, provider=GoogleProvider(api_key=c))),
-        ("ANTHROPIC_API_KEY", lambda c: AnthropicModel(MODELO_RESERVA, provider=AnthropicProvider(api_key=c))),
-    ]:
+
+def claves_disponibles():
+    """Los nombres de las claves de IA que hay en los secretos."""
+    disponibles = []
+    for nombre_clave in ("GEMINI_API_KEY", "ANTHROPIC_API_KEY"):
         try:
-            modelos.append(crear(st.secrets[nombre_clave]))
+            if st.secrets[nombre_clave]:
+                disponibles.append(nombre_clave)
         except Exception:  # sin secrets.toml o sin esa clave
             log.info("Sin %s: ese modelo no se usará", nombre_clave)
+    return disponibles
+
+
+def opciones_modelo():
+    """Las opciones del desplegable de modelos que se pueden usar con las claves que hay."""
+    disponibles = claves_disponibles()
+    return [opcion for opcion, clave in OPCIONES_MODELO.items() if clave is None or clave in disponibles]
+
+
+def obtener_modelo(eleccion=AUTOMATICO):
+    """Prepara el modelo de IA con las claves de los secretos, según lo elegido en Ajustes → Avanzado.
+
+    Automático: Gemini y, de reserva, Claude. Basta con una de las dos claves; con las dos, si Gemini
+    falla (cuota, caída…) se usa Claude. Si se elige uno solo, se usa ese y no hay reserva.
+    Devuelve None si no hay clave para lo elegido.
+    """
+    crear = {
+        "GEMINI_API_KEY": lambda c: GoogleModel(MODELO_GEMINI, provider=GoogleProvider(api_key=c)),
+        "ANTHROPIC_API_KEY": lambda c: AnthropicModel(MODELO_RESERVA, provider=AnthropicProvider(api_key=c)),
+    }
+    pedida = OPCIONES_MODELO.get(eleccion)  # None = automático (o una opción que ya no existe)
+    modelos = [crear[clave](st.secrets[clave]) for clave in claves_disponibles() if pedida in (None, clave)]
     if not modelos:
-        log.error("No hay ninguna clave de IA en los secretos")
+        log.error("No hay clave de IA para «%s»", eleccion)
         return None
-    log.info("Modelos disponibles (en orden): %s", ", ".join(m.model_name for m in modelos))
+    log.info("Modelos (en orden), según «%s»: %s", eleccion, ", ".join(m.model_name for m in modelos))
     return modelos[0] if len(modelos) == 1 else FallbackModel(*modelos)
 
 
@@ -242,17 +267,57 @@ def mensaje_error(e):
     return "No hay conexión con el servicio de IA. Pruebe de nuevo en unos minutos."
 
 
+# ---------- Qué modelo se usa (para enseñarlo en la pantalla) ----------
+
+def nombre_modelo(nombre_tecnico):
+    """«gemini-3.8-flash» → «Gemini (gemini-3.8-flash)»; «claude-haiku-5-5» → «Claude (claude-haiku-5-5)»."""
+    for marca in ("Gemini", "Claude"):
+        if marca.lower() in nombre_tecnico:
+            return f"{marca} ({nombre_tecnico})"
+    return nombre_tecnico
+
+
+def modelo_principal(modelo):
+    """El modelo que se prueba primero: el único que hay o el primero del FallbackModel."""
+    return nombre_modelo((modelo.models[0] if isinstance(modelo, FallbackModel) else modelo).model_name)
+
+
+def registrar_llamada(modelo, usado, segundos):
+    """Apunta en la sesión qué modelo ha respondido a cada llamada, para el resumen de la lectura."""
+    st.session_state.setdefault("llamadas_ia", []).append(
+        {"principal": modelo_principal(modelo), "modelo": nombre_modelo(usado), "segundos": segundos})
+
+
+def resumen_llamadas(llamadas):
+    """Una frase con los modelos que han leído los archivos, o que no ha hecho falta la IA."""
+    if not llamadas:
+        return "🤖 No se ha llamado a la IA: estos archivos ya estaban leídos y guardados en este navegador."
+    modelos = sorted({llamada["modelo"] for llamada in llamadas})
+    segundos = sum(llamada["segundos"] for llamada in llamadas)
+    texto = (f"🤖 Leído con {' y '.join(modelos)}: {len(llamadas)} "
+             f"{'llamada' if len(llamadas) == 1 else 'llamadas'} a la IA, {segundos:.0f} s.")
+    if any(llamada["modelo"] != llamada["principal"] for llamada in llamadas):
+        texto += f" {llamadas[0]['principal']} no respondía y se ha usado el modelo de reserva."
+    return texto
+
+
+QUE_SE_LEE = {"Movimiento": "el extracto", "Comprobante": "los comprobantes"}
+
+
 def llamar_ia(modelo, contenido, prompt, esquema):
     """Pide a la IA una lista con el esquema dado. Reintenta una vez si se agota la cuota.
 
     El FallbackModel ya pasa a Claude si Gemini falla; aquí solo se espera si fallan todos.
+    Mientras espera, dice con qué modelo se está leyendo; al terminar, apunta cuál ha respondido.
     Devuelve (lista_de_dicts, mensaje_de_error).
     """
     agente = Agent(modelo, output_type=list[esquema], instructions=prompt, model_settings={"temperature": 0})
+    que = QUE_SE_LEE.get(esquema.__name__, "los archivos")
     for intento in range(2):
         inicio = time.perf_counter()
         try:
-            respuesta = agente.run_sync(contenido)
+            with st.spinner(f"🤖 Leyendo {que} con {modelo_principal(modelo)}…"):
+                respuesta = agente.run_sync(contenido)
             break
         except (ModelAPIError, FallbackExceptionGroup) as e:
             log.warning("Falló la IA (%s, código %s): %r", esquema.__name__, codigo_error(e), e)
@@ -277,6 +342,7 @@ def llamar_ia(modelo, contenido, prompt, esquema):
     )
     if MODELO_GEMINI not in usado:
         log.warning("Gemini no estaba disponible: ha respondido el modelo de reserva (%s)", usado)
+    registrar_llamada(modelo, usado, time.perf_counter() - inicio)
     if not respuesta.output:
         return None, "La IA no ha devuelto datos para estos archivos. Pruebe con otros o con fotos más nítidas."
     return [elemento.model_dump() for elemento in respuesta.output], None
@@ -428,6 +494,7 @@ def conversar(modelo, pregunta, turnos, gastos, datos):
     # Sin las instrucciones (llevan todos los datos del cuadre): en cada pregunta se mandan las de ahora
     mensajes = [replace(m, instructions=None) if isinstance(m, ModelRequest) else m for m in respuesta.new_messages()]
     return {"pregunta": pregunta, "respuesta": respuesta.output, "consultas": consultas,
+            "modelo": nombre_modelo(respuesta.response.model_name or "?"),  # para enseñar quién ha respondido
             "mensajes": ModelMessagesTypeAdapter.dump_python(mensajes, mode="json")}, None
 
 
@@ -517,6 +584,8 @@ def mostrar_respuesta(turno):
     """La respuesta de la IA, con los gastos que ha sumado la app para responder."""
     with st.chat_message("assistant"):
         st.markdown(turno["respuesta"])
+        if turno.get("modelo"):  # las conversaciones guardadas antes no lo tienen
+            st.caption(f"🤖 Respondido con {turno['modelo']}")
         filas = [f for consulta in turno["consultas"] for f in consulta["filas"]]
         if filas:
             with st.expander("Gastos que ha sumado la app para responder"):

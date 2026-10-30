@@ -1,0 +1,37 @@
+# Tema de la app: colores, tipografía y bordes (claro y oscuro).
+# El navegador elige claro u oscuro según el sistema; el usuario puede cambiarlo en el menú ⋮ → Settings.
+# Los estilos que el tema no cubre están en estilo.py.
+
+[theme]
+font = "Plus Jakarta Sans:https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+headingFont = "Plus Jakarta Sans"
+headingFontWeights = [800, 700, 700, 600, 600, 600]
+baseRadius = "0.75rem"
+buttonRadius = "0.65rem"
+showWidgetBorder = true
+showSidebarBorder = true
+metricValueFontWeight = 700
+
+[theme.light]
+primaryColor = "#0f766e"
+backgroundColor = "#f6f8fa"
+secondaryBackgroundColor = "#eef2f5"
+textColor = "#0f172a"
+borderColor = "#dfe5ec"
+linkColor = "#0f766e"
+
+[theme.light.sidebar]
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f1f5f9"
+
+[theme.dark]
+primaryColor = "#0d9488"
+backgroundColor = "#0b1120"
+secondaryBackgroundColor = "#141d2f"
+textColor = "#e2e8f0"
+borderColor = "#243045"
+linkColor = "#5eead4"
+
+[theme.dark.sidebar]
+backgroundColor = "#0e1628"
+secondaryBackgroundColor = "#172238"

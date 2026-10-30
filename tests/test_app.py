@@ -61,7 +61,8 @@ class Validacion(unittest.TestCase):
 
     def test_CA8_sin_archivos(self):
         self.assertIn("Falta el extracto", app.validar(None, []))
-        self.assertIn("Faltan los tickets", app.validar(archivo("e.csv"), []))
+        # Los tickets son opcionales: con el extracto basta
+        self.assertIsNone(app.validar(archivo("e.csv"), []))
 
     def test_CA9_demasiados_comprobantes(self):
         aviso = app.validar(archivo("e.csv"), [archivo(f"t{i}.jpg") for i in range(21)])

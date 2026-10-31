@@ -456,6 +456,47 @@ class Interfaz(unittest.TestCase):
         self.assertFalse(self.at.exception)
         self.assertEqual([m.markdown[0].value for m in self.at.chat_message], ["¿Cuánto en restauración?", "25,60 €"])
 
+    def test_CA29_enviar_a_una_integracion_propia(self):
+        cuadre = {"id": "c1", "nombre": "Octubre", "extracto": "extracto_octubre.csv", "fecha": "31/10/26, 10:00",
+                  "actualizado": 1, "movimientos": datos_ejemplo.MOVIMIENTOS, "leidos": datos_ejemplo.COMPROBANTES}
+        self.at.session_state["guardado"] = {"lecturas": {}, "cuadres": {"c1": cuadre}}
+        self.at.session_state["guardado_cargado"] = True
+        self.at.run()
+        self.boton("Octubre").click().run()
+        # Sin secretos de Google Drive solo sale la integración propia
+        self.assertEqual(self.at.radio(key="destino").options, ["Integración propia"])
+        # Sin dirección: aviso y no se envía nada
+        with mock.patch.object(app.integraciones, "enviar_webhook") as enviar:
+            self.at.button(key="enviar").click().run()
+            self.assertIn("Escriba la dirección", self.at.warning[0].value)
+            enviar.assert_not_called()
+            # Con dirección: se envían los datos del cuadre
+            self.at.text_input(key="webhook_url").set_value("https://hooks.ejemplo.com/cuadre")
+            self.at.button(key="enviar").click().run()
+            self.assertFalse(self.at.exception)
+            url, datos, _clave = enviar.call_args.args
+            self.assertEqual((url, datos["cuadre"], datos["totales"]["gastos"]),
+                             ("https://hooks.ejemplo.com/cuadre", "Octubre", 10))
+            self.assertIn("Enviado", self.at.success[0].value)
+            # Si falla, el mensaje claro de integraciones.py, sin trazas
+            enviar.side_effect = app.integraciones.ErrorIntegracion("No hay conexión con El servicio.")
+            self.at.button(key="enviar").click().run()
+            self.assertIn("No hay conexión", self.at.error[0].value)
+
+    def test_CA29_google_drive_con_la_cuenta_del_usuario(self):
+        cuadre = {"id": "c1", "nombre": "Octubre", "extracto": "extracto_octubre.csv", "fecha": "31/10/26, 10:00",
+                  "actualizado": 1, "movimientos": datos_ejemplo.MOVIMIENTOS, "leidos": datos_ejemplo.COMPROBANTES}
+        self.at.session_state["guardado"] = {"lecturas": {}, "cuadres": {"c1": cuadre}}
+        self.at.session_state["guardado_cargado"] = True
+        with mock.patch.object(app.drive, "client_id", return_value="id.apps.googleusercontent.com"):
+            self.at.run()
+            self.boton("Octubre").click().run()
+            self.assertEqual(self.at.radio(key="destino").options, ["Google Drive", "Integración propia"])
+            # Con Google Drive no hay botón del servidor: lo sube el navegador del usuario (drive.py)
+            self.at.radio(key="destino").set_value("Google Drive").run()
+            self.assertFalse(self.at.exception)
+            self.assertFalse([b for b in self.at.button if b.key == "enviar"])
+
     def test_arranca_sin_errores(self):
         self.assertFalse(self.at.exception)
         self.assertEqual(self.at.title[0].value, "🧾 Cuadra tus gastos")

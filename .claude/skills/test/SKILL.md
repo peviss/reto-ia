@@ -10,6 +10,7 @@ Hay dos tipos de prueba. Haz siempre primero las automáticas: son gratis y tard
 | Tipo | Dónde | Qué cubre |
 |---|---|---|
 | Automáticas | `tests/test_cuadre.py` | Reglas de emparejamiento y agrupación con los datos de ejemplo |
+| Automáticas | `tests/test_integraciones.py` | Envíos de F4: webhook con una red falsa y la parte de Python de Drive |
 | Automáticas | `tests/test_app.py` | Validación de la entrada, mensajes de error de la IA y la interfaz con `AppTest` |
 | Manuales | La app abierta (`streamlit run app.py`) | Lo que necesita la IA de verdad o una persona |
 
@@ -52,6 +53,7 @@ qué CA afecta y la causa probable.
 | CA20 | `test_app.py` (orden del historial; `AppTest` abre un cuadre guardado y «Nuevo cuadre») | Cuadrar el ejemplo, recargar la página y abrirlo en *Mis cuadres* |
 | CA22 | `test_app.py` (base64, archivos compartidos y huérfanos, orden confirmada) | Recargar, abrir un cuadre y pulsar un ticket y un PDF |
 | CA21 | `test_app.py` (`juntar_comprobantes` y `validar` al editar) | Abrir un cuadre, subir 2 tickets más y pulsar «Añadir al cuadre» |
+| CA29 | `test_integraciones.py` (JSON, https, red interna, errores, `client_id`) y `test_app.py` (panel 📤) | Con la app y un `client_id` real: «Conectar con Google Drive y guardar» con una cuenta de prueba y abrir el enlace; enviar el ejemplo a un webhook de prueba |
 | CA14 | — | Una persona que no conoce la app, con el ejemplo, < 2 min |
 
 Las pruebas automáticas comprueban las **reglas**; que la **IA lea bien** los archivos solo se ve

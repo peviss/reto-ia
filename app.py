@@ -37,7 +37,9 @@ from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.google import GoogleProvider
 
 import almacen
+import drive
 import estilo
+import integraciones
 from cuadre import CATEGORIAS, PAISES, POR_CONFIRMAR, clave_pareja, consultar_gastos, cuadrar
 
 MODELO_GEMINI = "gemini-3.8-flash"
@@ -534,6 +536,57 @@ def a_excel(gastos, resumen, sueltos):
     return salida.getvalue()
 
 
+# ---------- Enviar a un servicio externo (F4, integraciones.py) ----------
+
+DESTINO_DRIVE = "Google Drive"
+DESTINO_PROPIO = "Integración propia"
+
+
+def enviar_cuadre(activo, gastos, resumen, sueltos, excel):
+    """El panel «📤»: guarda el cuadre abierto en la Google Drive del usuario o lo manda a su servicio (webhook).
+
+    Google Drive solo sale si está su client_id en los secretos: el usuario entra con su cuenta de Google
+    y el navegador sube el Excel a su Drive (drive.py). La integración propia la envía el servidor.
+    Solo se envía al pulsar el botón. Los fallos se muestran con un mensaje claro, sin trazas.
+    """
+    id_cliente = drive.client_id()
+    destinos = ([DESTINO_DRIVE] if id_cliente else []) + [DESTINO_PROPIO]
+    destino = st.radio("Enviar a", destinos, key="destino", horizontal=True)
+    if destino == DESTINO_DRIVE:
+        st.caption("Se abre una ventana de Google para que entre con su cuenta. La app solo puede ver los "
+                   "archivos que guarda ella, en la carpeta «Cuadra tus gastos» de su Drive.")
+        drive.boton_guardar(id_cliente, f"Cuadre · {activo['nombre']}", excel, integraciones.MIME_EXCEL,
+                            key="drive")
+        return
+    st.text_input("Dirección del servicio", key="webhook_url", placeholder="https://…",
+                  help="La que le dé su programa de contabilidad, Make, Zapier, n8n o un Apps Script de Google. "
+                  "Recibe el cuadre en JSON, con el Excel dentro.")
+    st.text_input("Clave (opcional)", key="webhook_clave", type="password",
+                  help="Solo si el servicio la pide. Se manda en la cabecera «Authorization: Bearer …».")
+    st.caption("Los gastos y el Excel se envían a esa dirección. No se guarda en ningún sitio.")
+    if not st.button("📤 Enviar", type="primary", width="stretch", key="enviar"):
+        return
+    url = st.session_state.get("webhook_url", "").strip()
+    if not url:
+        st.warning("Escriba la dirección del servicio al que quiere enviar el cuadre.")
+        return
+    try:
+        with st.spinner("Enviando…"):
+            datos = integraciones.datos_del_cuadre(activo["nombre"], activo["extracto"], gastos, resumen,
+                                                   sueltos, excel)
+            integraciones.enviar_webhook(url, datos, st.session_state.get("webhook_clave", ""))
+    except integraciones.ErrorIntegracion as e:
+        log.warning("No se ha podido enviar a la integración propia: %s", e)
+        st.error(str(e))
+        return
+    except Exception:
+        log.exception("Error inesperado al enviar a la integración propia")
+        st.error("No se ha podido enviar. Pruebe de nuevo en unos minutos.")
+        return
+    log.info("Cuadre «%s» enviado a la integración propia", activo["nombre"])
+    st.success("Enviado. Compruébelo en su servicio.")
+
+
 # ---------- Interfaz ----------
 
 @st.dialog("Comprobante", width="large")
@@ -792,7 +845,9 @@ def ayuda():
         "💾 **Qué se guarda:** cada cuadre, lo que ha leído la IA, las fotos y PDF de los comprobantes y sus preguntas en «Pregunte» se guardan "
         "**solo en este navegador** (no en nuestro servidor). Si el ordenador es compartido, elimine sus cuadres al terminar. "
         "En la barra lateral, **Mis cuadres**, puede abrir uno, añadirle más tickets o empezar uno nuevo. "
-        "Los archivos ya leídos no se vuelven a mandar a la IA. Puede borrarlo todo en ⚙️ Ajustes."
+        "Los archivos ya leídos no se vuelven a mandar a la IA. Puede borrarlo todo en ⚙️ Ajustes.\n\n"
+        "📤 **Enviar:** con el cuadre abierto, puede guardarlo en su Google Drive (entrando con su cuenta de Google) "
+        "o mandarlo al servicio que usted elija (su programa de contabilidad, por ejemplo). Solo se envía cuando pulsa el botón."
     )
 
 
@@ -858,6 +913,7 @@ with c_nombre:
 with c_botones, st.container(horizontal=True, horizontal_alignment="right"):
     if activo:
         zona_excel = st.empty()  # el botón del Excel se rellena abajo, cuando ya está hecho el cuadre
+        zona_enviar = st.container()  # y el de enviar a otro servicio, también
         with st.popover("✏️", help="Cambiar el nombre o eliminar este cuadre"):
             st.text_input("Nombre del cuadre", value=activo["nombre"], key=f"nombre_{subida}", on_change=renombrar)
             if st.button("🗑️ Eliminar este cuadre", width="stretch"):
@@ -998,14 +1054,17 @@ if activo:
     total = gastos["Importe (€)"].sum()
     justificado = gastos.loc[con, "Importe (€)"].sum()
 
-    # El Excel va arriba, junto al nombre del cuadre
+    # El Excel y el botón de enviar van arriba, junto al nombre del cuadre
+    excel = a_excel(gastos, resumen, sueltos)
     zona_excel.download_button(
         "⬇️ Excel",
-        data=a_excel(gastos, resumen, sueltos),
+        data=excel,
         file_name="gastos_cuadrados.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         help="Para enviarlo a su gestoría: por categoría, todos los gastos y los comprobantes sueltos.",
     )
+    with zona_enviar, st.popover("📤", help="Enviar el cuadre a Google Drive o a otro servicio"):
+        enviar_cuadre(activo, gastos, resumen, sueltos, excel)
     # Qué modelo ha leído los archivos: un aviso que se va solo, una vez, justo después de cuadrar
     if st.session_state.get("ultima_lectura"):
         st.toast(st.session_state.pop("ultima_lectura"))

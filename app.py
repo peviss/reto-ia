@@ -90,6 +90,25 @@ class Comprobante(BaseModel):
     legible: bool
 
 
+class CampoIntegracion(BaseModel):
+    destino: str  # el nombre del campo en la API; con puntos si va dentro de otro («contact.name», «lines.0.price»)
+    origen: Literal[tuple(integraciones.ORIGENES)]
+    formato: Literal[tuple(integraciones.FORMATOS)] = "tal_cual"
+    valor: str = ""  # solo si origen = "fijo"
+
+
+class ConfiguracionIntegracion(BaseModel):
+    nombre: str
+    url: str
+    metodo: Literal[integraciones.METODOS]
+    autenticacion: Literal[tuple(integraciones.AUTENTICACIONES)]
+    cabecera_clave: str = ""
+    envio: Literal[tuple(integraciones.ENVIOS)]
+    campo_lista: str = ""
+    campos: list[CampoIntegracion]
+    notas: str = ""  # para el usuario: qué endpoint se ha elegido y qué debe revisar
+
+
 LISTA_CATEGORIAS = ", ".join(CATEGORIAS)
 
 PROMPT_EXTRACTO = f"""Eres un asistente contable. Te paso un extracto bancario \
@@ -134,6 +153,36 @@ Reglas:
 - Un reembolso agrupado ocupa varias filas con el mismo n.º de «Mov.»: es un solo pago.
 - Si algo no está en los datos, dilo; no lo inventes. No digas si un gasto es deducible ni des consejos fiscales.
 - Responde en español, tratando de usted, en pocas frases y sin jerga. Importes con coma decimal y «€».
+"""
+
+
+def lista_opciones(opciones):
+    return "\n".join(f"  - {clave}: {texto}" for clave, texto in opciones.items())
+
+
+PROMPT_INTEGRACION = f"""Eres un asistente que conecta una app de gastos con la API de otro programa (de contabilidad, \
+de facturación, una hoja de cálculo, un webhook…). Te paso la especificación de esa API (OpenAPI/Swagger, documentación \
+o ejemplos) y, a veces, lo que quiere hacer el usuario. Devuelve UNA configuración para enviarle los gastos.
+
+Cada gasto tiene estos datos (origen):
+{lista_opciones(integraciones.ORIGENES)}
+Formatos posibles:
+{lista_opciones(integraciones.FORMATOS)}
+
+Reglas:
+- Elige el endpoint que crea un gasto, una compra, un movimiento o una transacción (o el que pida el usuario).
+- url: la dirección completa (servidor + ruta), empezando por https://. metodo: el del endpoint.
+- envio: "lista" si el endpoint acepta varios gastos a la vez (campo_lista = el campo que lleva la lista, o "" si el \
+cuerpo es directamente la lista); si no, "uno_por_gasto". "completo" solo si la API acepta cualquier JSON (un webhook genérico).
+- campos: uno por cada campo del cuerpo que se pueda rellenar con los datos del gasto. destino = el nombre exacto de la \
+especificación; los campos anidados con puntos y las posiciones de una lista con números («lines.0.price»). \
+Elige el formato que pide la API (fechas, céntimos, signo del importe).
+- Si un campo obligatorio no sale de los datos, ponlo con origen "fijo" y un valor razonable (o vacío) y explícalo en notas.
+- autenticacion: "bearer" si la clave va en «Authorization: Bearer»; "cabecera" (y cabecera_clave = su nombre) si va en \
+otra cabecera; "ninguna" si no pide clave. Si va en la dirección o de otra forma, dilo en notas. Nunca escribas claves.
+- nombre: el nombre corto del programa o servicio.
+- notas: en español, tratando de usted, en pocas frases y sin jerga: qué endpoint has elegido y qué debe revisar o completar.
+- No inventes direcciones ni campos que no estén en la especificación.
 """
 
 
@@ -305,7 +354,8 @@ def resumen_llamadas(llamadas):
     return texto
 
 
-QUE_SE_LEE = {"Movimiento": "el extracto", "Comprobante": "los comprobantes"}
+QUE_SE_LEE = {"Movimiento": "el extracto", "Comprobante": "los comprobantes",
+              "ConfiguracionIntegracion": "la especificación de la API"}
 
 
 def llamar_ia(modelo, contenido, prompt, esquema):
@@ -427,6 +477,32 @@ def leer_comprobantes_con_memoria(modelo, archivos, barra):
     return ya_leidos + nuevos, None
 
 
+MAX_CARACTERES_ESPECIFICACION = 300_000  # ~80.000 tokens: cabe en Gemini y en Claude
+
+
+def leer_especificacion(modelo, especificacion, objetivo=""):
+    """El asistente de integraciones: la IA lee la especificación de una API y propone la configuración.
+
+    `especificacion` es texto o un archivo PDF (dict). La IA solo propone: el usuario la revisa y la envía Python.
+    Devuelve (configuración, mensaje_de_error).
+    """
+    contenido = [f"Lo que quiere hacer el usuario: {objetivo.strip()}"] if objetivo.strip() else []
+    if isinstance(especificacion, dict):  # un PDF con la documentación
+        contenido.append(BinaryContent(data=especificacion["datos"], media_type="application/pdf"))
+    else:
+        if len(especificacion) > MAX_CARACTERES_ESPECIFICACION:
+            log.info("Especificación recortada: %d caracteres", len(especificacion))
+            especificacion = especificacion[:MAX_CARACTERES_ESPECIFICACION] + "\n[… recortada]"
+        contenido.append(f"Especificación de la API:\n{especificacion}")
+    datos, error = llamar_ia(modelo, contenido, PROMPT_INTEGRACION, ConfiguracionIntegracion)
+    if error:
+        return None, error
+    propuesta = datos[0]
+    log.info("Asistente de integraciones: %s %s, %d campos", propuesta["metodo"], propuesta["url"],
+             len(propuesta["campos"]))
+    return {**integraciones.configuracion_nueva(), **propuesta}, None
+
+
 def datos_para_conversar(movimientos, leidos, gastos, sueltos):
     """Todo lo extraído del cuadre, en texto (CSV), para dárselo a la IA en la conversación.
 
@@ -542,12 +618,152 @@ DESTINO_DRIVE = "Google Drive"
 DESTINO_PROPIO = "Integración propia"
 
 
+CAMPOS_FORMULARIO = ("nombre", "url", "metodo", "autenticacion", "cabecera_clave", "envio", "campo_lista")
+
+
+def cargar_formulario(config):
+    """Pone una integración en el formulario del diálogo (las claves fi_… son sus casillas)."""
+    st.session_state.form_integracion = config
+    for campo in CAMPOS_FORMULARIO:
+        st.session_state[f"fi_{campo}"] = config[campo]
+    st.session_state.fi_version = st.session_state.get("fi_version", 0) + 1  # vacía los cambios de la tabla
+
+
+def abrir_integracion(id_integracion=None):
+    """Abre el diálogo con una integración guardada o con una nueva."""
+    cargar_formulario(dict(almacen.integracion(id_integracion) or integraciones.configuracion_nueva()))
+    st.session_state.abrir_integracion = True
+
+
+def configuracion_del_formulario(form, campos):
+    """La integración tal como está en el formulario. `campos` es la tabla editada (DataFrame)."""
+    filas = campos.fillna("").to_dict("records")
+    return {**form, **{campo: str(st.session_state.get(f"fi_{campo}", form[campo])) for campo in CAMPOS_FORMULARIO},
+            "campos": [{**fila, "destino": str(fila["destino"]).strip(), "valor": str(fila["valor"])}
+                       for fila in filas if any(str(v).strip() for v in fila.values())]}
+
+
+def asistente_integracion(texto, archivo, direccion, objetivo):
+    """Rellena el formulario con lo que propone la IA al leer la especificación de la API."""
+    if archivo is not None and archivo.size > MAX_MB_ARCHIVO * 1024 * 1024:
+        st.warning(f"El archivo pesa más de {MAX_MB_ARCHIVO} MB. Suba solo la parte de la API que quiere usar.")
+        return
+    try:
+        if archivo is not None:
+            especificacion = (archivo_desde_subida(archivo) if archivo.name.lower().endswith(".pdf")
+                              else archivo.getvalue().decode("utf-8", errors="replace"))
+        elif direccion.strip():
+            with st.spinner("Descargando la especificación…"):
+                especificacion = integraciones.descargar_especificacion(direccion)
+        else:
+            especificacion = texto
+    except integraciones.ErrorIntegracion as e:
+        st.error(str(e))
+        return
+    if not especificacion or (isinstance(especificacion, str) and not especificacion.strip()):
+        st.warning("Pegue la especificación de la API, súbala en un archivo o escriba su dirección.")
+        return
+    modelo = obtener_modelo(st.session_state.get("modelo_elegido", AUTOMATICO))
+    if modelo is None:
+        st.error("La app no está bien configurada (falta la clave). Avise a quien la mantiene.")
+        return
+    propuesta, error = leer_especificacion(modelo, especificacion, objetivo)
+    if error:
+        st.error(error)
+        return
+    cargar_formulario({**propuesta, "id": st.session_state.form_integracion["id"]})  # editar no crea otra
+
+
+@st.dialog("Integración propia", width="large")
+def editar_integracion(filas):
+    """Configura a qué servicio y con qué campos se envía el cuadre: a mano o con el asistente (IA).
+
+    `filas` son los gastos del cuadre abierto, para la vista previa.
+    """
+    nueva = not st.session_state.form_integracion["id"]
+    with st.expander("🤖 Asistente: rellenarla a partir de la especificación de la API", expanded=nueva):
+        st.caption("Pegue la especificación (OpenAPI/Swagger o la documentación de la API), súbala en un archivo "
+                   "o escriba su dirección. La IA propone los campos y usted los revisa antes de guardar. "
+                   "La clave de la API no se manda a la IA.")
+        texto = st.text_area("Especificación", key="fi_espec_texto", height=140, placeholder="openapi: 3.0.0 …")
+        c_archivo, c_direccion = st.columns(2)
+        archivo = c_archivo.file_uploader("…o un archivo", type=["json", "yaml", "yml", "txt", "md", "pdf"],
+                                          key="fi_espec_archivo")
+        direccion = c_direccion.text_input("…o su dirección", key="fi_espec_url",
+                                           placeholder="https://…/openapi.json")
+        objetivo = st.text_input("Qué quiere hacer (opcional)", key="fi_objetivo",
+                                 placeholder="Por ejemplo: crear un gasto por cada movimiento del banco")
+        if st.button("🤖 Leer la especificación", key="fi_leer"):
+            asistente_integracion(texto, archivo, direccion, objetivo)
+
+    form = st.session_state.form_integracion
+    if form.get("notas"):
+        st.info(f"🤖 {form['notas']}")
+    c1, c2 = st.columns([1, 2])
+    c1.text_input("Nombre", key="fi_nombre", placeholder="Mi programa de contabilidad")
+    c2.text_input("Dirección (URL)", key="fi_url", placeholder="https://…")
+    c1, c2, c3 = st.columns(3)
+    c1.selectbox("Método", integraciones.METODOS, key="fi_metodo")
+    c2.selectbox("Cómo se envía", list(integraciones.ENVIOS), format_func=integraciones.ENVIOS.get, key="fi_envio")
+    c3.selectbox("Clave de la API", list(integraciones.AUTENTICACIONES),
+                 format_func=integraciones.AUTENTICACIONES.get, key="fi_autenticacion")
+    if st.session_state.fi_autenticacion == "cabecera":
+        st.text_input("Nombre de la cabecera con la clave", key="fi_cabecera_clave", placeholder="X-API-Key")
+    if st.session_state.fi_envio == "lista":
+        st.text_input("Campo que lleva la lista de gastos (vacío = el cuerpo es la lista)", key="fi_campo_lista",
+                      placeholder="expenses")
+
+    if st.session_state.fi_envio == "completo":
+        st.caption("Se envía todo el cuadre con el formato de la app: totales, categorías, gastos, comprobantes "
+                   "sueltos y el Excel. Para elegir los campos, cambie «Cómo se envía».")
+        campos = pd.DataFrame(form["campos"], columns=["destino", "origen", "formato", "valor"])
+    else:
+        st.markdown("**Campos**", help="Cada fila es un campo del JSON que pide la API: su nombre (con puntos si "
+                    "va dentro de otro, como «contact.name» o «lines.0.price»), de qué dato del gasto sale y en qué "
+                    "formato. Con «Valor fijo», se manda lo que escriba en «Valor».")
+        campos = st.data_editor(
+            pd.DataFrame(form["campos"], columns=["destino", "origen", "formato", "valor"]),
+            key=f"fi_campos_{st.session_state.fi_version}", num_rows="dynamic", hide_index=True, width="stretch",
+            column_config={
+                "destino": st.column_config.TextColumn("Campo en la API", required=True),
+                "origen": st.column_config.SelectboxColumn(
+                    "De dónde sale", options=list(integraciones.ORIGENES), required=True, default="fecha",
+                    format_func=integraciones.ORIGENES.get),
+                "formato": st.column_config.SelectboxColumn(
+                    "Formato", options=list(integraciones.FORMATOS), required=True, default="tal_cual",
+                    format_func=integraciones.FORMATOS.get),
+                "valor": st.column_config.TextColumn("Valor (si es fijo)"),
+            })
+        config = configuracion_del_formulario(form, campos)
+        with st.expander("👁️ Vista previa del primer envío"):
+            try:
+                st.json(integraciones.cuerpos(config, filas[:2], {})[0], expanded=True)
+            except (KeyError, ValueError, IndexError, TypeError):
+                st.caption("Complete los campos para ver la vista previa.")
+
+    config = configuracion_del_formulario(form, campos)
+    c_guardar, c_eliminar = st.columns(2)
+    if c_guardar.button("💾 Guardar", type="primary", width="stretch", key="fi_guardar"):
+        aviso = integraciones.validar_configuracion(config)
+        if aviso:
+            st.warning(aviso)
+        else:
+            config["id"] = config["id"] or almacen.nuevo_id()
+            almacen.guardar_integracion(config)
+            log.info("Integración «%s» guardada (%s, %d campos)", config["nombre"], config["envio"], len(config["campos"]))
+            st.session_state.integracion_por_elegir = config["id"]
+            st.rerun()
+    if not nueva and c_eliminar.button("🗑️ Eliminar", width="stretch", key="fi_eliminar"):
+        almacen.eliminar_integracion(config["id"])
+        st.rerun()
+
+
 def enviar_cuadre(activo, gastos, resumen, sueltos, excel):
-    """El panel «📤»: guarda el cuadre abierto en la Google Drive del usuario o lo manda a su servicio (webhook).
+    """El panel «📤»: guarda el cuadre abierto en la Google Drive del usuario o lo manda a una integración propia.
 
     Google Drive solo sale si está su client_id en los secretos: el usuario entra con su cuenta de Google
-    y el navegador sube el Excel a su Drive (drive.py). La integración propia la envía el servidor.
-    Solo se envía al pulsar el botón. Los fallos se muestran con un mensaje claro, sin trazas.
+    y el navegador sube el Excel a su Drive (drive.py). Las integraciones propias las envía el servidor,
+    con los campos que se hayan configurado (a mano o con el asistente). Solo se envía al pulsar el botón.
     """
     id_cliente = drive.client_id()
     destinos = ([DESTINO_DRIVE] if id_cliente else []) + [DESTINO_PROPIO]
@@ -558,33 +774,46 @@ def enviar_cuadre(activo, gastos, resumen, sueltos, excel):
         drive.boton_guardar(id_cliente, f"Cuadre · {activo['nombre']}", excel, integraciones.MIME_EXCEL,
                             key="drive")
         return
-    st.text_input("Dirección del servicio", key="webhook_url", placeholder="https://…",
-                  help="La que le dé su programa de contabilidad, Make, Zapier, n8n o un Apps Script de Google. "
-                  "Recibe el cuadre en JSON, con el Excel dentro.")
-    st.text_input("Clave (opcional)", key="webhook_clave", type="password",
-                  help="Solo si el servicio la pide. Se manda en la cabecera «Authorization: Bearer …».")
-    st.caption("Los gastos y el Excel se envían a esa dirección. No se guarda en ningún sitio.")
+
+    guardadas = {i["id"]: i for i in almacen.integraciones()}
+    if not guardadas:
+        st.caption("Configure a dónde se envía: su programa de contabilidad, Make, Zapier, n8n… "
+                   "Puede escribir los campos a mano o dejar que la IA lea la especificación de la API.")
+        st.button("➕ Configurar una integración", on_click=abrir_integracion, width="stretch", key="nueva_integracion")
+        return
+    if st.session_state.get("integracion_por_elegir") in guardadas:  # la que se acaba de guardar
+        st.session_state.integracion_elegida = st.session_state.pop("integracion_por_elegir")
+    elegida = st.selectbox("Integración", list(guardadas), format_func=lambda i: guardadas[i]["nombre"],
+                           key="integracion_elegida")
+    config = guardadas[elegida]
+    detalle = integraciones.ENVIOS[config["envio"]]
+    if config["envio"] != "completo":
+        detalle += f" · {len(config['campos'])} campos"
+    st.caption(f"{detalle} · {config['metodo']} {config['url']}")
+    with st.container(horizontal=True):
+        st.button("✏️ Editar", on_click=abrir_integracion, args=(elegida,), key="editar_integracion")
+        st.button("➕ Nueva", on_click=abrir_integracion, key="otra_integracion")
+    if config["autenticacion"] != "ninguna":
+        st.text_input("Clave de la API", key=f"clave_{elegida}", type="password",
+                      help="No se guarda en ningún sitio: escríbala cada vez que abra la app.")
     if not st.button("📤 Enviar", type="primary", width="stretch", key="enviar"):
         return
-    url = st.session_state.get("webhook_url", "").strip()
-    if not url:
-        st.warning("Escriba la dirección del servicio al que quiere enviar el cuadre.")
-        return
     try:
-        with st.spinner("Enviando…"):
+        with st.spinner(f"Enviando a {config['nombre']}…"):
             datos = integraciones.datos_del_cuadre(activo["nombre"], activo["extracto"], gastos, resumen,
                                                    sueltos, excel)
-            integraciones.enviar_webhook(url, datos, st.session_state.get("webhook_clave", ""))
+            filas = integraciones.filas_para_enviar(gastos, activo["leidos"], activo["nombre"])
+            hechas = integraciones.enviar(config, st.session_state.get(f"clave_{elegida}", ""), filas, datos)
     except integraciones.ErrorIntegracion as e:
-        log.warning("No se ha podido enviar a la integración propia: %s", e)
+        log.warning("No se ha podido enviar a «%s»: %s", config["nombre"], e)
         st.error(str(e))
         return
     except Exception:
-        log.exception("Error inesperado al enviar a la integración propia")
+        log.exception("Error inesperado al enviar a «%s»", config["nombre"])
         st.error("No se ha podido enviar. Pruebe de nuevo en unos minutos.")
         return
-    log.info("Cuadre «%s» enviado a la integración propia", activo["nombre"])
-    st.success("Enviado. Compruébelo en su servicio.")
+    log.info("Cuadre «%s» enviado a «%s» en %d peticiones", activo["nombre"], config["nombre"], hechas)
+    st.success(f"Enviado a {config['nombre']}" + (f": {hechas} gastos." if config["envio"] == "uno_por_gasto" else "."))
 
 
 # ---------- Interfaz ----------
@@ -1160,6 +1389,9 @@ if activo:
         st.dataframe(pd.DataFrame(movimientos), hide_index=True)
 
     # Se abre aquí (y no en la tabla) para que no vuelva a salir al mover un ajuste
+    if st.session_state.pop("abrir_integracion", False):
+        editar_integracion(integraciones.filas_para_enviar(gastos, leidos, activo["nombre"]))
+
     nombre = st.session_state.pop("abrir_comprobante", "")
     if nombre:
         ver_comprobante(nombre, archivos, leidos, gastos, activo.get("huellas", {}))

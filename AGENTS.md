@@ -16,10 +16,10 @@ texto visible: en español, trato de "usted", sin jerga informática ni contable
 
 | Archivo | Qué hace | Reglas |
 |---|---|---|
-| `app.py` | Interfaz + llamadas a la IA (Gemini, con Claude de reserva) para **leer** documentos y **conversar** sobre lo extraído | La IA solo extrae datos con esquema JSON (Pydantic). Nunca decide emparejamientos. En la conversación no suma: llama a `sumar_gastos` (`cuadre.consultar_gastos`). |
+| `app.py` | Interfaz + llamadas a la IA (Gemini, con Claude de reserva) para **leer** documentos, **conversar** sobre lo extraído y **proponer integraciones** leyendo la especificación de una API | La IA solo extrae datos con esquema JSON (Pydantic). Nunca decide emparejamientos. En la conversación no suma: llama a `sumar_gastos` (`cuadre.consultar_gastos`). En las integraciones solo propone: revisa el usuario y envía Python; la clave de la API no va nunca a la IA. |
 | `almacen.py` | Guarda en el navegador (IndexedDB) lo leído por la IA, el historial de cuadres, los archivos de los comprobantes y las conversaciones, con un componente `st.components.v2` | Los archivos no vuelven nunca a Python: los muestra el visor desde IndexedDB. Si cambias un prompt o un esquema, sube `VERSION_LECTURA`. |
 | `estilo.py` + `.streamlit/config.toml` | Aspecto: tema claro/oscuro, letra y colores (config), CSS/HTML que el tema no cubre y la lista de movimientos en tarjetas (componente `st.components.v2`) | Solo presentación, sin dependencias nuevas. Los bloques se localizan por su `key` (clase `st-key-<key>`). |
-| `integraciones.py` | **Envía** el cuadre desde el servidor a una integración propia (webhook JSON) | Python puro con `urllib`, sin Streamlit ni IA. Solo `https` y direcciones públicas. Para un destino nuevo, una función que lance `ErrorIntegracion` con un mensaje claro. |
+| `integraciones.py` | **Envía** el cuadre desde el servidor a una integración propia: todo el cuadre o los gastos con los campos configurados (nombre en la API ← dato del gasto, con formato) | Python puro con `urllib`, sin Streamlit ni IA. Solo `https` y direcciones públicas. Si añades un dato (`ORIGENES`) o un formato (`FORMATOS`), lo ve también el asistente (va en `PROMPT_INTEGRACION`). |
 | `drive.py` | Guarda el cuadre en la **Google Drive del usuario**: componente `st.components.v2` con OAuth (Google Identity Services) en el navegador | El token se queda en el navegador: nunca al servidor. Permiso `drive.file`. Solo `client_id` en los secretos, sin `client_secret`. |
 | `cuadre.py` | **Empareja** (uno a uno y reembolsos agrupados) y **agrupa** con reglas fijas | Python puro, sin IA ni Streamlit, para poder probarlo y explicarlo. |
 | `ejemplos/` | Datos inventados + `generar_ejemplos.py` | Si añades un caso, regenera y actualiza ESPECIFICACION §5. |
@@ -60,7 +60,7 @@ cp .streamlit/secrets.toml.example .streamlit/secrets.toml   # pegar claves
 streamlit run app.py          # → "Probar con datos de ejemplo" → "Cuadrar gastos"
 ```
 
-Después, recorrer los criterios de aceptación CA1–CA29 de `ESPECIFICACION.md` que no cubren las
+Después, recorrer los criterios de aceptación CA1–CA31 de `ESPECIFICACION.md` que no cubren las
 pruebas automáticas. En Claude Code lo guía la skill `/test`.
 
 ## Al terminar una tarea

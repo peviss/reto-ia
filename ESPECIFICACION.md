@@ -25,7 +25,7 @@ Para 30–40 movimientos al mes son 1–2 horas, y la gestoría suele devolver u
 | Proponer una categoría para cada gasto | Detectar gastos sin comprobante y comprobantes sin gasto | Conectarse al banco (el usuario descarga el extracto) |
 | | Exportar a Excel | Un ticket pagado en varios cargos (pagos fraccionados) |
 | Entender las preguntas del usuario sobre su cuadre y responderlas en lenguaje sencillo | Filtrar y sumar los gastos que pide la pregunta | Preguntas sobre varios cuadres a la vez; consejos fiscales |
-| | Enviar el cuadre a la Google Drive del usuario (OAuth en su navegador) o a otro servicio (webhook), solo al pulsar el botón | Recibir datos de esos servicios; un conector propio para cada programa de contabilidad |
+| Leer la especificación de una API (OpenAPI o documentación) y proponer qué dato va en qué campo | Enviar el cuadre a la Google Drive del usuario (OAuth en su navegador) o a otra API con los campos configurados, solo al pulsar el botón | Recibir datos de esos servicios; enviar sin que el usuario revise la propuesta de la IA |
 
 **Por qué este reparto:** leer documentos variados es lo que la IA hace bien y una regla no.
 Emparejar importes es lo que una regla hace bien y una IA puede inventarse: así el cruce es
@@ -38,7 +38,7 @@ comprobable y siempre da el mismo resultado.
 | F1 | Emparejar comprobantes con el extracto | Extracto (CSV/XLSX/PDF) + hasta 20 tickets/facturas (JPG/PNG/WEBP/HEIC/PDF), **opcionales**: solo con el extracto, todos los gastos salen sin comprobante y se agrupan por categoría | Tabla de gastos con su comprobante (✅), varios comprobantes si es un reembolso agrupado (🔗) o "⚠️ Falta comprobante" |
 | F2 | Detectar lo que falta | El mismo resultado | Lista de gastos sin justificante + lista de comprobantes que no están en el banco (efectivo, otra tarjeta, ilegibles) |
 | F3 | Agrupar por categoría | El mismo resultado | Tabla y gráfico por categoría (total, nº de gastos, cuántos justificados, € sin justificar) + Excel descargable |
-| F4 | Enviar el cuadre a un servicio externo | El cuadre abierto y un destino: **Google Drive** del usuario (entra con su cuenta de Google; sale si está el `client_id` en los secretos) o una **integración propia** (dirección https y, opcional, una clave) | Drive: el Excel como hoja de cálculo de Google en la carpeta «Cuadra tus gastos» de su Drive y un enlace para abrirla. Integración propia: un POST con el cuadre en JSON (totales, por categoría, gastos, comprobantes sueltos y el Excel en base64) |
+| F4 | Enviar el cuadre a un servicio externo | El cuadre abierto y un destino: **Google Drive** del usuario (entra con su cuenta de Google; sale si está el `client_id` en los secretos) o una **integración propia** guardada (dirección, método, clave, cómo se envía y **campos**, escritos a mano o propuestos por el asistente con IA a partir de la especificación de la API) | Drive: el Excel como hoja de cálculo de Google en la carpeta «Cuadra tus gastos» de su Drive y un enlace para abrirla. Integración propia: el cuadre entero en JSON, o los gastos con los campos que pide esa API (una petición con la lista o una por gasto) |
 | F5 | Conversar con lo extraído | Preguntas en lenguaje natural sobre el cuadre abierto («¿cuánto gasté en restauración?», «¿qué compré en la ferretería?») | Respuesta breve; si lleva un total, lo calcula Python y se muestran los gastos sumados |
 
 **Reglas de emparejamiento (en este orden):**
@@ -55,7 +55,7 @@ comprobable y siempre da el mismo resultado.
 Extras de usabilidad: botón "Probar con datos de ejemplo", ajuste de **País** (España o Uruguay; por defecto España), ajustes de días de tolerancia (0–10, por
 defecto 4) y de ventana de reembolsos (0–90, por defecto 30; 0 = no buscar), pestaña "Lectura IA" para revisar, aviso de privacidad, y ventana para **ver cada comprobante** al pulsar sobre su nombre (en *Movimientos* y en *Qué falta*), con lo que ha leído la IA y el gasto del banco con el que va.
 
-**Memoria en el navegador (IndexedDB, `almacen.py`):** lo que lee la IA se guarda en el navegador de quien usa la app, identificado por la huella (SHA-256) del contenido de cada archivo. Si se vuelve a subir un archivo ya leído (aunque cambie de nombre), se usa lo guardado y **no se llama a la IA**. También se guarda cada **cuadre** (extracto + comprobantes leídos) en un historial (F6) y los **archivos de los comprobantes** (fotos reducidas a ~300 KB, PDF tal cual) para verlos al abrir un cuadre. Los archivos viajan una vez en base64 hasta el navegador, se guardan como `Blob` (una sola vez aunque estén en varios cuadres) y **no vuelven al servidor**: los muestra un componente que los lee de IndexedDB. Al eliminar un cuadre o sustituir un ticket se borran los archivos que ya no usa ningún cuadre. Las **conversaciones** de *Pregunte* (F5) se guardan aparte, una por cuadre (para que preguntar no cambie su fecha en el historial), sin los datos del cuadre que van en las instrucciones; se borran con su cuadre. Las lecturas ilegibles no se guardan (para que la IA lo intente de nuevo) y nada pasa por un servidor propio. Si cambian los prompts o los esquemas, se sube `VERSION_LECTURA` y lo leído antes deja de usarse. Se puede borrar en *Ajustes*.
+**Memoria en el navegador (IndexedDB, `almacen.py`):** lo que lee la IA se guarda en el navegador de quien usa la app, identificado por la huella (SHA-256) del contenido de cada archivo. Si se vuelve a subir un archivo ya leído (aunque cambie de nombre), se usa lo guardado y **no se llama a la IA**. También se guarda cada **cuadre** (extracto + comprobantes leídos) en un historial (F6) y los **archivos de los comprobantes** (fotos reducidas a ~300 KB, PDF tal cual) para verlos al abrir un cuadre. Los archivos viajan una vez en base64 hasta el navegador, se guardan como `Blob` (una sola vez aunque estén en varios cuadres) y **no vuelven al servidor**: los muestra un componente que los lee de IndexedDB. Al eliminar un cuadre o sustituir un ticket se borran los archivos que ya no usa ningún cuadre. Las **integraciones propias** (F4) se guardan en su almacén, **sin la clave de la API**. Las **conversaciones** de *Pregunte* (F5) se guardan aparte, una por cuadre (para que preguntar no cambie su fecha en el historial), sin los datos del cuadre que van en las instrucciones; se borran con su cuadre. Las lecturas ilegibles no se guardan (para que la IA lo intente de nuevo) y nada pasa por un servidor propio. Si cambian los prompts o los esquemas, se sube `VERSION_LECTURA` y lo leído antes deja de usarse. Se puede borrar en *Ajustes*.
 
 **Categorías fijas:** Alimentación · Restauración · Transporte y combustible · Suministros (luz,
 agua, gas) · Telecomunicaciones y software · Material y oficina · Salud · Impuestos y cuotas ·
@@ -71,7 +71,7 @@ Compras online · Otros. Si la IA devuelve otra, se convierte en "Otros".
 | F2 | Detectar lo que falta | ✅ Implementada | `app.py`: pestaña «⚠️ Qué falta» | CA4, CA5, CA10 | Reglas probadas en `tests/`; falta la prueba manual con la IA real |
 | F3 | Agrupar por categoría + Excel | ✅ Implementada | `cuadre.py` (agrupación), `app.py`: `a_excel`, pestaña «📊 Categorías» | CA1, CA7 | Reglas probadas en `tests/`; falta la prueba manual con la IA real |
 | F6 | Historial de cuadres: abrir, ampliar con más comprobantes, renombrar, eliminar y empezar uno nuevo | ✅ Implementada | `almacen.py` (IndexedDB); `app.py`: barra lateral «Mis cuadres», `empezar`, `juntar_comprobantes` | CA19–CA22 | Probado en Chrome con los ejemplos (sin llamar a la IA) y en `tests/test_app.py` |
-| F4 | Enviar el cuadre a un servicio externo (Google Drive del usuario con OAuth o integración propia por webhook) | ✅ Implementada | `drive.py` (componente con OAuth en el navegador); `integraciones.py`: `datos_del_cuadre`, `enviar_webhook`; `app.py`: `enviar_cuadre` (botón «📤») | CA29 | Python probado en `tests/test_integraciones.py` (red falsa) y `tests/test_app.py`; el JavaScript de Drive y un webhook real, solo a mano |
+| F4 | Enviar el cuadre a un servicio externo (Google Drive del usuario con OAuth o integración propia con campos configurables y asistente con IA) | ✅ Implementada | `drive.py` (OAuth en el navegador); `integraciones.py`: `cuerpos`, `enviar`, `validar_configuracion`, `descargar_especificacion`; `app.py`: `enviar_cuadre` (botón «📤»), `editar_integracion` (diálogo), `leer_especificacion` (asistente); `almacen.py`: `guardar_integracion` | CA29–CA31 | Python probado en `tests/` (red y modelo falsos). En Chrome (2026-11-01): asistente con Gemini real sobre un OpenAPI inventado → endpoint, cabecera, fecha, céntimos y campo anidado correctos; guardar, editar y aviso de dirección inexistente. Sin probar: el JavaScript de Drive y un envío a una API real |
 | F5 | Conversar con lo extraído (RAG) | ✅ Implementada | `cuadre.py`: `consultar_gastos`; `app.py`: `datos_para_conversar`, `conversar`, pestaña «💬 Pregunte»; `almacen.py`: `guardar_conversacion` | CA23–CA26 | Reglas y conversación con modelo falso probadas en `tests/`; falta la prueba manual con la IA real |
 
 Estados: 📝 Planeada · 🚧 En curso · ✅ Implementada (el código existe y se puede usar) ·
@@ -107,9 +107,15 @@ Solo se envía al pulsar el botón. Sin dependencias nuevas. Destinos: *Google D
   - El token de acceso (1 hora) se queda en el navegador y **no llega al servidor**; mientras dura, el botón pasa a **📁 Guardar en mi Google Drive**. **Desconectar Google Drive** revoca el permiso.
   - Solo hace falta el `client_id` de un cliente OAuth «Aplicación web» de Google Cloud, con la URL de la app y `http://localhost:8501` como orígenes de JavaScript autorizados. Sin `client_secret` ni `refresh_token`.
   - Errores con mensaje claro: ventana cerrada o permiso denegado, ventana emergente bloqueada, token caducado (401), sin permiso o sin espacio (403), sin conexión con Google.
-- **Integración propia (webhook, `integraciones.py`, Python puro con `urllib`):** el usuario pega una dirección `https://` (Make, Zapier, n8n, un Apps Script, la API de su programa de contabilidad) y, si la pide, una clave que va en `Authorization: Bearer …`. El servidor manda un POST con JSON: `app`, `version` (`VERSION_FORMATO`), `enviado`, `cuadre`, `extracto`, `totales` (los de las 4 cifras), `por_categoria`, `gastos`, `comprobantes_sueltos` y `excel` (`nombre`, `mime`, `base64`). La dirección y la clave solo viven en la sesión.
-  - **Seguridad:** solo `https` y solo a direcciones públicas de internet (también tras una redirección), para que nadie use el servidor de la app para llegar a una red interna.
-  - **Errores:** dirección mal escrita o que no existe, 401/403, 404, 413, 5xx, sin red o más de 20 s → `st.error` con un mensaje claro.
+- **Integración propia (`integraciones.py`, Python puro con `urllib`; el diálogo en `app.py`):** en 📤 se elige una integración guardada (o **➕ Configurar una integración** si no hay ninguna), con **✏️ Editar** y **➕ Nueva**, la **clave de la API** si la pide (no se guarda: se escribe en cada sesión) y **📤 Enviar**.
+  - **Configuración** (diálogo «Integración propia»): nombre, dirección `https://`, método (POST, PUT, PATCH), clave (sin clave, `Authorization: Bearer`, o una cabecera propia como `X-API-Key`) y **cómo se envía**:
+    - *Todo el cuadre (formato de la app)*: un JSON con `app`, `version` (`VERSION_FORMATO`), `enviado`, `cuadre`, `extracto`, `totales` (los de las 4 cifras), `por_categoria`, `gastos`, `comprobantes_sueltos` y `excel` (`nombre`, `mime`, `base64`). Para Make, Zapier, n8n o un Apps Script.
+    - *Una petición con la lista de gastos* (dentro del campo que se diga, o el cuerpo es la lista) o *una petición por gasto*, con los **campos** de la tabla.
+  - **Campos** (tabla editable, se añaden y quitan filas): *Campo en la API* (con puntos si va dentro de otro: `contact.name`, `lines.0.price`), *De dónde sale* (fecha, importe, concepto, categoría, comercio, comprobante, tiene comprobante, estado, n.º de movimiento, nombre del cuadre o un valor fijo), *Formato* (tal cual, texto, número, negativo, céntimos, fecha DD/MM/AAAA, fecha Unix) y *Valor* si es fijo. Un reembolso agrupado son varias filas: cada compra va con su categoría. **👁️ Vista previa** con el JSON del primer gasto.
+  - **🤖 Asistente** (desplegable arriba del diálogo, abierto en una integración nueva): se pega la especificación (OpenAPI/Swagger o documentación), se sube un archivo (JSON, YAML, texto, Markdown o PDF) o se escribe su dirección (se descarga solo de direcciones https públicas, hasta 2 MB), con una frase opcional de lo que se quiere hacer. **🤖 Leer la especificación** rellena el formulario con la propuesta de la IA y sus **notas** (qué endpoint ha elegido y qué revisar). El usuario la revisa y la guarda; la IA no envía nada ni ve la clave.
+  - Se guarda en el navegador (IndexedDB, almacén `integraciones`) **sin la clave**. *Borrar lo guardado* también las borra.
+  - **Seguridad:** solo `https` y solo a direcciones públicas de internet (también tras una redirección y al descargar la especificación).
+  - **Errores:** configuración incompleta (sin nombre, sin campos, campos repetidos…) → aviso al guardar o enviar; falta la clave → aviso antes de salir a la red; dirección que no existe, 401/403, 404, 413, 5xx, sin red o más de 20 s → `st.error`; 400/422 → mensaje con la explicación que da la API, para corregir los campos; si falla a mitad de un envío por gasto → «Se han enviado N de M gastos».
 
 ## 4. Pieza de IA
 
@@ -134,6 +140,11 @@ Solo se envía al pulsar el botón. Sin dependencias nuevas. Destinos: *Google D
   No se usa una base vectorial (Chroma o similar) porque buscar «trozos parecidos» puede dejarse filas al sumar,
   los datos tendrían que guardarse en el servidor (y deben quedarse en el navegador) y añadiría una dependencia pesada.
   Se le recuerdan a la IA las últimas 10 preguntas (`TURNOS_RECORDADOS`).
+- **Asistente de integraciones (F4):** la IA lee la especificación de una API y devuelve una `ConfiguracionIntegracion`
+  (salida con esquema: dirección, método, clave, cómo se envía y `CampoIntegracion` con destino, origen y formato de cada
+  campo, más unas notas). Como con los tickets, la IA solo **lee y propone**: el usuario la revisa y el envío lo hace
+  Python (`integraciones.enviar`). La especificación se recorta a 300.000 caracteres (`MAX_CARACTERES_ESPECIFICACION`).
+  Cuesta 1 llamada; en la prueba manual, unos 40 s con Gemini.
 - **Cómo se ahorra cuota:** las fotos se reducen a 1600 px (~300 KB); se envían 5 comprobantes por
   llamada, así que 20 comprobantes son 1 + 4 = 5 llamadas. El resultado se guarda y mover el ajuste
   de días no vuelve a llamar a la IA. Lo leído se guarda en el navegador (IndexedDB): volver a subir los mismos
@@ -152,6 +163,7 @@ Solo se envía al pulsar el botón. Sin dependencias nuevas. Destinos: *Google D
 | Error del servidor (5xx) / sin red | Mensaje de probar en unos minutos |
 | La IA se salta un archivo | Aparece como "No se ha podido leer" en *Qué falta* |
 | La IA lee mal un importe | No cuadrará: el ticket y el gasto aparecen en *Qué falta*; el usuario lo ve en *Lectura IA* |
+| Falla la IA en el asistente de integraciones | Los mismos mensajes; el formulario se queda como estaba |
 | Falla la IA en la conversación | Los mismos mensajes que arriba (con un reintento si es 429); la pregunta no se guarda y se puede repetir |
 
 ## 5. Casos límite y criterios de aceptación
@@ -159,7 +171,7 @@ Solo se envía al pulsar el botón. Sin dependencias nuevas. Destinos: *Google D
 Datos de prueba: `ejemplos/` (inventados, regenerables con `python ejemplos/generar_ejemplos.py`).
 
 **Pruebas automáticas** (`python -m unittest discover -s tests -v`, sin llamar a la IA): cubren
-CA1–CA13, CA15–CA22, CA23, CA24, CA26–CA29 con lo que la IA *debería* leer de los ejemplos (`tests/datos_ejemplo.py`) y
+CA1–CA13, CA15–CA22, CA23, CA24, CA26–CA31 con lo que la IA *debería* leer de los ejemplos (`tests/datos_ejemplo.py`) y
 modelos de IA falsos para los errores y el paso a Claude, y una red falsa para los envíos de F4. Quedan para la prueba manual con la app: que la IA lea
 bien los ejemplos, CA14, CA25 y que las respuestas de la conversación sean correctas con la IA real. Cada prueba lleva en su nombre el ID del criterio (`test_CA7_…`).
 GitHub las pasa solas en cada push y pull request (`.github/workflows/pruebas.yml`), sin claves.
@@ -193,7 +205,9 @@ GitHub las pasa solas en cada push y pull request (`.github/workflows/pruebas.ym
 | CA26 | Conversación guardada | Hacer 2 preguntas, recargar la página y abrir el cuadre en *Mis cuadres* | Salen las 2 preguntas con sus respuestas y se puede seguir; al eliminar el cuadre o *Borrar la conversación* desaparece |
 | CA27 | Uruguay: débito automático con 2 puntos menos de IVA | País «Uruguay»; banco «DEBITO AUTOMATICO ELECTRICA DEL SUR» −1.200; factura de luz de 1.220 (IVA 22 %) | Emparejados, con «descuento IVA débito automático (20,00)». Con IVA 10 %: 1.100 → 1.080. En España, sin «débito automático» en el concepto o si no es un servicio: no hay descuento y queda «por confirmar» (mismo nombre, importe a menos del 10 %). Si hay una factura de 1.200 exactos, gana esa |
 | CA28 | Facturas de servicios y «por confirmar» | Extracto de Uruguay: luz 3.622,00 cobrada el 02/09 (factura emitida el 24/08, vence el 02/09); agua 2.343,84 y teléfono 2.102,95 (facturas de 2.378,00 y 2.138,00 con 1.707,98 y 1.752,42 gravados); archivos «UTI - Factura.pdf»… | Con País «Uruguay»: los tres seguros (la luz, por el vencimiento; agua y teléfono, con descuento 34,16 y 35,05). En España: agua y teléfono «🟡 Por confirmar»; ✅ los deja confirmados y ❌ los suelta. Sin vencimiento leído, la luz queda por confirmar por el nombre del archivo. Una foto llamada como el asunto de una transferencia se propone por confirmar. Sin nombre en común: «Falta comprobante» |
-| CA29 | Enviar a otro servicio | Cuadre del ejemplo → 📤 → *Integración propia* | Sin dirección: aviso y no se envía. Con `https://…`: POST con el cuadre en JSON (10 gastos, 7 con comprobante) y «Enviado». `http://` o una dirección de la red interna: no se envía y se explica. Si el servicio falla: mensaje claro. Con `[google_drive] client_id` en los secretos sale *Google Drive*: tras entrar con su cuenta de Google, deja una hoja de cálculo en la carpeta «Cuadra tus gastos» de **su** Drive con un enlace para abrirla; cerrar la ventana de Google da un aviso, no un error |
+| CA29 | Enviar a otro servicio | Cuadre del ejemplo → 📤 | Integración «Todo el cuadre»: POST con el cuadre en JSON (10 gastos, 7 con comprobante). `http://` o una dirección de la red interna: no se envía y se explica. Si el servicio falla: mensaje claro. Con `[google_drive] client_id` en los secretos sale *Google Drive*: tras entrar con su cuenta de Google, deja una hoja de cálculo en la carpeta «Cuadra tus gastos» de **su** Drive con un enlace para abrirla; cerrar la ventana de Google da un aviso, no un error |
+| CA30 | Campos a mano | Integración «una petición por gasto» con `date` ← fecha (DD/MM/AAAA), `amount.cents` ← importe (céntimos), `account` ← fijo «629» | 12 peticiones (el reembolso son 3); la primera `{"date": "01/10/2026", "amount": {"cents": 23000}, "account": "629"}`; la vista previa lo enseña. Sin nombre, sin campos o con dos iguales: aviso al guardar. Con clave y sin escribirla: aviso sin salir a la red. Se guarda sin la clave. Si falla el 2.º gasto: «Se han enviado 1 de 3» |
+| CA31 | Asistente de integraciones | Pegar un OpenAPI con `POST /expenses` (fecha DD/MM/YYYY, importe en céntimos, `supplier.name`, clave en `X-Api-Key`) → «Leer la especificación» | Rellena dirección completa, método, «Cabecera propia» `X-Api-Key`, «Una petición por gasto» y los campos con su formato, con unas notas; nada se envía hasta pulsar 📤 Enviar. Si falla la IA: mensaje claro |
 | CA14 | Usuario no técnico | Persona que no conoce la app | Con el ejemplo, entiende qué le falta en menos de 2 minutos sin ayuda |
 
 ## 6. Prompts reutilizables
@@ -207,6 +221,11 @@ GitHub las pasa solas en cada push y pull request (`.github/workflows/pruebas.ym
   comercial corto o sigla** (como saldría en el banco), no la razón social; fecha de emisión y, si la hay,
   de **vencimiento**; el TOTAL con IVA (no subtotal ni efectivo entregado); la **base gravada** sin IVA (0 si
   no aparece); `legible=false` si hay dudas, en lugar de inventar.
+
+- `PROMPT_INTEGRACION` (F4, asistente): conectar la app con la API de otro programa; los datos de cada gasto (`ORIGENES`) y
+  los formatos (`FORMATOS`) van en la lista; elegir el endpoint que crea un gasto (o el que pida el usuario); dirección
+  completa https; «lista» si acepta varios gastos, si no «uno_por_gasto»; destinos con el nombre exacto, anidados con puntos;
+  obligatorios sin dato → «fijo» y explicarlo en notas; detectar la clave sin escribirla nunca; notas de usted, breves; no inventar.
 
 - `PROMPT_CONVERSACION` (F5): responder solo con los datos del cuadre (van debajo, en CSV); para totales y
   recuentos usar **siempre** la herramienta `sumar_gastos`; un reembolso agrupado es un solo pago; si no está en

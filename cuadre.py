@@ -381,7 +381,7 @@ def cuadrar(movimientos, comprobantes, tolerancia_dias=4, ventana_reembolso=30, 
 
 
 def consultar_gastos(gastos, categoria=None, desde=None, hasta=None, texto=None, justificante=None):
-    """Filtra la tabla de gastos de `cuadrar` y suma. La usa la conversación (F5) para que la IA no sume.
+    """Filtra la tabla de gastos de `cuadrar` y suma. La usa la conversación (F4) para que la IA no sume.
 
     - categoria: una de CATEGORIAS. desde / hasta: 'AAAA-MM-DD', incluidos.
     - texto: se busca (sin tildes ni mayúsculas) en el concepto del banco y en el nombre del comprobante.

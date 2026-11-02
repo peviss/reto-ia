@@ -1,4 +1,4 @@
-"""Integraciones: envía el cuadre abierto a un servicio externo desde el servidor (F4).
+"""Integraciones: envía el cuadre abierto a un servicio externo desde el servidor (F3).
 
 Python puro (sin Streamlit ni IA) y solo con la biblioteca estándar, para poder probarlo sin red.
 

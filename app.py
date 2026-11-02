@@ -518,7 +518,7 @@ def datos_para_conversar(movimientos, leidos, gastos, sueltos):
 
 
 def conversar(modelo, pregunta, turnos, gastos, datos):
-    """Responde a una pregunta sobre el cuadre abierto, recordando las anteriores (F5).
+    """Responde a una pregunta sobre el cuadre abierto, recordando las anteriores (F4).
 
     La IA entiende la pregunta y redacta; los totales los calcula Python con la herramienta sumar_gastos.
     Devuelve (turno, mensaje_de_error): el turno lleva la pregunta, la respuesta, las consultas hechas
@@ -612,7 +612,7 @@ def a_excel(gastos, resumen, sueltos):
     return salida.getvalue()
 
 
-# ---------- Enviar a un servicio externo (F4, integraciones.py) ----------
+# ---------- Enviar a un servicio externo (F3, integraciones.py) ----------
 
 DESTINO_DRIVE = "Google Drive"
 DESTINO_PROPIO = "Integración propia"

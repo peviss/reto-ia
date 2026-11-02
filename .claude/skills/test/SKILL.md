@@ -10,7 +10,7 @@ Hay dos tipos de prueba. Haz siempre primero las automáticas: son gratis y tard
 | Tipo | Dónde | Qué cubre |
 |---|---|---|
 | Automáticas | `tests/test_cuadre.py` | Reglas de emparejamiento y agrupación con los datos de ejemplo |
-| Automáticas | `tests/test_integraciones.py` | Envíos de F4 con una red falsa: campos, formatos, formas de envío, claves y errores; la parte de Python de Drive |
+| Automáticas | `tests/test_integraciones.py` | Envíos de F3 con una red falsa: campos, formatos, formas de envío, claves y errores; la parte de Python de Drive |
 | Automáticas | `tests/test_app.py` | Validación de la entrada, mensajes de error de la IA y la interfaz con `AppTest` |
 | Manuales | La app abierta (`streamlit run app.py`) | Lo que necesita la IA de verdad o una persona |
 

@@ -35,11 +35,10 @@ comprobable y siempre da el mismo resultado.
 
 | # | Funcionalidad | Entrada | Salida |
 |---|---|---|---|
-| F1 | Emparejar comprobantes con el extracto | Extracto (CSV/XLSX/PDF) + hasta 20 tickets/facturas (JPG/PNG/WEBP/HEIC/PDF), **opcionales**: solo con el extracto, todos los gastos salen sin comprobante y se agrupan por categoría | Tabla de gastos con su comprobante (✅), varios comprobantes si es un reembolso agrupado (🔗) o "⚠️ Falta comprobante" |
-| F2 | Detectar lo que falta | El mismo resultado | Lista de gastos sin justificante + lista de comprobantes que no están en el banco (efectivo, otra tarjeta, ilegibles) |
-| F3 | Agrupar por categoría | El mismo resultado | Tabla y gráfico por categoría (total, nº de gastos, cuántos justificados, € sin justificar) + Excel descargable |
-| F4 | Enviar el cuadre a un servicio externo | El cuadre abierto y un destino: **Google Drive** del usuario (entra con su cuenta de Google; sale si está el `client_id` en los secretos) o una **integración propia** guardada (dirección, método, clave, cómo se envía y **campos**, escritos a mano o propuestos por el asistente con IA a partir de la especificación de la API) | Drive: el Excel como hoja de cálculo de Google en la carpeta «Cuadra tus gastos» de su Drive y un enlace para abrirla. Integración propia: el cuadre entero en JSON, o los gastos con los campos que pide esa API (una petición con la lista o una por gasto) |
-| F5 | Conversar con lo extraído | Preguntas en lenguaje natural sobre el cuadre abierto («¿cuánto gasté en restauración?», «¿qué compré en la ferretería?») | Respuesta breve; si lleva un total, lo calcula Python y se muestran los gastos sumados |
+| F1 | Emparejar comprobantes con el extracto y detectar lo que falta | Extracto (CSV/XLSX/PDF) + hasta 20 tickets/facturas (JPG/PNG/WEBP/HEIC/PDF), **opcionales**: solo con el extracto, todos los gastos salen sin comprobante y se agrupan por categoría | Tabla de gastos con su comprobante (✅), varios comprobantes si es un reembolso agrupado (🔗) o "⚠️ Falta comprobante", y lo que falta: lista de gastos sin justificante + lista de comprobantes que no están en el banco (efectivo, otra tarjeta, ilegibles) |
+| F2 | Agrupar por categoría | El mismo resultado | Tabla y gráfico por categoría (total, nº de gastos, cuántos justificados, € sin justificar) + Excel descargable |
+| F3 | Enviar el cuadre a un servicio externo | El cuadre abierto y un destino: **Google Drive** del usuario (entra con su cuenta de Google; sale si está el `client_id` en los secretos) o una **integración propia** guardada (dirección, método, clave, cómo se envía y **campos**, escritos a mano o propuestos por el asistente con IA a partir de la especificación de la API) | Drive: el Excel como hoja de cálculo de Google en la carpeta «Cuadra tus gastos» de su Drive y un enlace para abrirla. Integración propia: el cuadre entero en JSON, o los gastos con los campos que pide esa API (una petición con la lista o una por gasto) |
+| F4 | Conversar con lo extraído | Preguntas en lenguaje natural sobre el cuadre abierto («¿cuánto gasté en restauración?», «¿qué compré en la ferretería?») | Respuesta breve; si lleva un total, lo calcula Python y se muestran los gastos sumados |
 
 **Reglas de emparejamiento (en este orden):**
 
@@ -55,7 +54,7 @@ comprobable y siempre da el mismo resultado.
 Extras de usabilidad: botón "Probar con datos de ejemplo", ajuste de **País** (España o Uruguay; por defecto España), ajustes de días de tolerancia (0–10, por
 defecto 4) y de ventana de reembolsos (0–90, por defecto 30; 0 = no buscar), pestaña "Lectura IA" para revisar, aviso de privacidad, y ventana para **ver cada comprobante** al pulsar sobre su nombre (en *Movimientos* y en *Qué falta*), con lo que ha leído la IA y el gasto del banco con el que va.
 
-**Memoria en el navegador (IndexedDB, `almacen.py`):** lo que lee la IA se guarda en el navegador de quien usa la app, identificado por la huella (SHA-256) del contenido de cada archivo. Si se vuelve a subir un archivo ya leído (aunque cambie de nombre), se usa lo guardado y **no se llama a la IA**. También se guarda cada **cuadre** (extracto + comprobantes leídos) en un historial (F6) y los **archivos de los comprobantes** (fotos reducidas a ~300 KB, PDF tal cual) para verlos al abrir un cuadre. Los archivos viajan una vez en base64 hasta el navegador, se guardan como `Blob` (una sola vez aunque estén en varios cuadres) y **no vuelven al servidor**: los muestra un componente que los lee de IndexedDB. Al eliminar un cuadre o sustituir un ticket se borran los archivos que ya no usa ningún cuadre. Las **integraciones propias** (F4) se guardan en su almacén, **sin la clave de la API**. Las **conversaciones** de *Pregunte* (F5) se guardan aparte, una por cuadre (para que preguntar no cambie su fecha en el historial), sin los datos del cuadre que van en las instrucciones; se borran con su cuadre. Las lecturas ilegibles no se guardan (para que la IA lo intente de nuevo) y nada pasa por un servidor propio. Si cambian los prompts o los esquemas, se sube `VERSION_LECTURA` y lo leído antes deja de usarse. Se puede borrar en *Ajustes*.
+**Memoria en el navegador (IndexedDB, `almacen.py`):** lo que lee la IA se guarda en el navegador de quien usa la app, identificado por la huella (SHA-256) del contenido de cada archivo. Si se vuelve a subir un archivo ya leído (aunque cambie de nombre), se usa lo guardado y **no se llama a la IA**. También se guarda cada **cuadre** (extracto + comprobantes leídos) en un historial (F5) y los **archivos de los comprobantes** (fotos reducidas a ~300 KB, PDF tal cual) para verlos al abrir un cuadre. Los archivos viajan una vez en base64 hasta el navegador, se guardan como `Blob` (una sola vez aunque estén en varios cuadres) y **no vuelven al servidor**: los muestra un componente que los lee de IndexedDB. Al eliminar un cuadre o sustituir un ticket se borran los archivos que ya no usa ningún cuadre. Las **integraciones propias** (F3) se guardan en su almacén, **sin la clave de la API**. Las **conversaciones** de *Pregunte* (F4) se guardan aparte, una por cuadre (para que preguntar no cambie su fecha en el historial), sin los datos del cuadre que van en las instrucciones; se borran con su cuadre. Las lecturas ilegibles no se guardan (para que la IA lo intente de nuevo) y nada pasa por un servidor propio. Si cambian los prompts o los esquemas, se sube `VERSION_LECTURA` y lo leído antes deja de usarse. Se puede borrar en *Ajustes*.
 
 **Categorías fijas:** Alimentación · Restauración · Transporte y combustible · Suministros (luz,
 agua, gas) · Telecomunicaciones y software · Material y oficina · Salud · Impuestos y cuotas ·
@@ -63,16 +62,15 @@ Compras online · Otros. Si la IA devuelve otra, se convierte en "Otros".
 
 ### 2.1 Estado de las funcionalidades
 
-**Implementadas: 6 / 6** · Verificadas: 0 / 6 · Última actualización: 2026-10-31
+**Implementadas: 5 / 5** · Verificadas: 0 / 5 · Última actualización: 2026-11-01
 
 | # | Funcionalidad | Estado | Dónde está | Criterios | Notas |
 |---|---|---|---|---|---|
-| F1 | Emparejar comprobantes con el extracto | ✅ Implementada | `cuadre.py`: `emparejar`, `agrupar_reembolsos`, `cuadrar` | CA1–CA3, CA7, CA13, CA15–CA17, CA27, CA28 | Reglas probadas en `tests/test_cuadre.py`; falta la prueba manual con la IA real |
-| F2 | Detectar lo que falta | ✅ Implementada | `app.py`: pestaña «⚠️ Qué falta» | CA4, CA5, CA10 | Reglas probadas en `tests/`; falta la prueba manual con la IA real |
-| F3 | Agrupar por categoría + Excel | ✅ Implementada | `cuadre.py` (agrupación), `app.py`: `a_excel`, pestaña «📊 Categorías» | CA1, CA7 | Reglas probadas en `tests/`; falta la prueba manual con la IA real |
-| F6 | Historial de cuadres: abrir, ampliar con más comprobantes, renombrar, eliminar y empezar uno nuevo | ✅ Implementada | `almacen.py` (IndexedDB); `app.py`: barra lateral «Mis cuadres», `empezar`, `juntar_comprobantes` | CA19–CA22 | Probado en Chrome con los ejemplos (sin llamar a la IA) y en `tests/test_app.py` |
-| F4 | Enviar el cuadre a un servicio externo (Google Drive del usuario con OAuth o integración propia con campos configurables y asistente con IA) | ✅ Implementada | `drive.py` (OAuth en el navegador); `integraciones.py`: `cuerpos`, `enviar`, `validar_configuracion`, `descargar_especificacion`; `app.py`: `enviar_cuadre` (botón «📤»), `editar_integracion` (diálogo), `leer_especificacion` (asistente); `almacen.py`: `guardar_integracion` | CA29–CA31 | Python probado en `tests/` (red y modelo falsos). En Chrome (2026-11-01): asistente con Gemini real sobre un OpenAPI inventado → endpoint, cabecera, fecha, céntimos y campo anidado correctos; guardar, editar y aviso de dirección inexistente. Sin probar: el JavaScript de Drive y un envío a una API real |
-| F5 | Conversar con lo extraído (RAG) | ✅ Implementada | `cuadre.py`: `consultar_gastos`; `app.py`: `datos_para_conversar`, `conversar`, pestaña «💬 Pregunte»; `almacen.py`: `guardar_conversacion` | CA23–CA26 | Reglas y conversación con modelo falso probadas en `tests/`; falta la prueba manual con la IA real |
+| F1 | Emparejar comprobantes con el extracto y detectar lo que falta | ✅ Implementada | `cuadre.py`: `emparejar`, `agrupar_reembolsos`, `cuadrar`; `app.py`: pestaña «⚠️ Qué falta» | CA1–CA5, CA7, CA10, CA13, CA15–CA17, CA27, CA28 | Reglas probadas en `tests/`; falta la prueba manual con la IA real |
+| F2 | Agrupar por categoría + Excel | ✅ Implementada | `cuadre.py` (agrupación), `app.py`: `a_excel`, pestaña «📊 Categorías» | CA1, CA7 | Reglas probadas en `tests/`; falta la prueba manual con la IA real |
+| F5 | Historial de cuadres: abrir, ampliar con más comprobantes, renombrar, eliminar y empezar uno nuevo | ✅ Implementada | `almacen.py` (IndexedDB); `app.py`: barra lateral «Mis cuadres», `empezar`, `juntar_comprobantes` | CA19–CA22 | Probado en Chrome con los ejemplos (sin llamar a la IA) y en `tests/test_app.py` |
+| F3 | Enviar el cuadre a un servicio externo (Google Drive del usuario con OAuth o integración propia con campos configurables y asistente con IA) | ✅ Implementada | `drive.py` (OAuth en el navegador); `integraciones.py`: `cuerpos`, `enviar`, `validar_configuracion`, `descargar_especificacion`; `app.py`: `enviar_cuadre` (botón «📤»), `editar_integracion` (diálogo), `leer_especificacion` (asistente); `almacen.py`: `guardar_integracion` | CA29–CA31 | Python probado en `tests/` (red y modelo falsos). En Chrome (2026-11-01): asistente con Gemini real sobre un OpenAPI inventado → endpoint, cabecera, fecha, céntimos y campo anidado correctos; guardar, editar y aviso de dirección inexistente. Sin probar: el JavaScript de Drive y un envío a una API real |
+| F4 | Conversar con lo extraído (RAG) | ✅ Implementada | `cuadre.py`: `consultar_gastos`; `app.py`: `datos_para_conversar`, `conversar`, pestaña «💬 Pregunte»; `almacen.py`: `guardar_conversacion` | CA23–CA26 | Reglas y conversación con modelo falso probadas en `tests/`; falta la prueba manual con la IA real |
 
 Estados: 📝 Planeada · 🚧 En curso · ✅ Implementada (el código existe y se puede usar) ·
 🧪 Verificada (sus criterios de aceptación pasan con los datos de ejemplo) · ❌ Descartada (no cuenta en el total).
@@ -98,7 +96,7 @@ elegir modelo) va detrás de un botón o en la barra lateral, y no se repite la 
 8. Al pulsar sobre un comprobante en una tabla se abre una ventana con la foto o el PDF, un botón para descargarlo y, debajo, su detalle. Si el cuadre se abrió del historial, el archivo sale de IndexedDB.
 9. Al pie, una línea: la IA puede equivocarse; revise los importes; la app no sustituye a la gestoría.
 
-### 3.1 Enviar a otro servicio (F4, `drive.py` e `integraciones.py`)
+### 3.1 Enviar a otro servicio (F3, `drive.py` e `integraciones.py`)
 
 Solo se envía al pulsar el botón. Sin dependencias nuevas. Destinos: *Google Drive* (solo sale si está `[google_drive] client_id` en los secretos) e *Integración propia* (siempre).
 
@@ -132,7 +130,7 @@ Solo se envía al pulsar el botón. Sin dependencias nuevas. Destinos: *Google D
   tiene capa gratuita sin GPU.
   Claude va de reserva porque la cuota gratuita de Gemini se agota pronto: así la app sigue
   funcionando. Pydantic AI permite usar los dos con el mismo código, esquemas y prompts.
-- **Conversación (F5), un RAG sin base vectorial:** la *recuperación* la hace Python. Un cuadre tiene como
+- **Conversación (F4), un RAG sin base vectorial:** la *recuperación* la hace Python. Un cuadre tiene como
   mucho unos cientos de filas, así que **todo lo extraído** (gastos con su comprobante, comprobantes sueltos,
   lo leído de cada comprobante e ingresos) va en CSV en las instrucciones (`datos_para_conversar`). Para
   totales y recuentos la IA llama a la herramienta `sumar_gastos` (filtros: categoría, fechas, texto, con o sin
@@ -140,7 +138,7 @@ Solo se envía al pulsar el botón. Sin dependencias nuevas. Destinos: *Google D
   No se usa una base vectorial (Chroma o similar) porque buscar «trozos parecidos» puede dejarse filas al sumar,
   los datos tendrían que guardarse en el servidor (y deben quedarse en el navegador) y añadiría una dependencia pesada.
   Se le recuerdan a la IA las últimas 10 preguntas (`TURNOS_RECORDADOS`).
-- **Asistente de integraciones (F4):** la IA lee la especificación de una API y devuelve una `ConfiguracionIntegracion`
+- **Asistente de integraciones (F3):** la IA lee la especificación de una API y devuelve una `ConfiguracionIntegracion`
   (salida con esquema: dirección, método, clave, cómo se envía y `CampoIntegracion` con destino, origen y formato de cada
   campo, más unas notas). Como con los tickets, la IA solo **lee y propone**: el usuario la revisa y el envío lo hace
   Python (`integraciones.enviar`). La especificación se recorta a 300.000 caracteres (`MAX_CARACTERES_ESPECIFICACION`).
@@ -172,7 +170,7 @@ Datos de prueba: `ejemplos/` (inventados, regenerables con `python ejemplos/gene
 
 **Pruebas automáticas** (`python -m unittest discover -s tests -v`, sin llamar a la IA): cubren
 CA1–CA13, CA15–CA22, CA23, CA24, CA26–CA31 con lo que la IA *debería* leer de los ejemplos (`tests/datos_ejemplo.py`) y
-modelos de IA falsos para los errores y el paso a Claude, y una red falsa para los envíos de F4. Quedan para la prueba manual con la app: que la IA lea
+modelos de IA falsos para los errores y el paso a Claude, y una red falsa para los envíos de F3. Quedan para la prueba manual con la app: que la IA lea
 bien los ejemplos, CA14, CA25 y que las respuestas de la conversación sean correctas con la IA real. Cada prueba lleva en su nombre el ID del criterio (`test_CA7_…`).
 GitHub las pasa solas en cada push y pull request (`.github/workflows/pruebas.yml`), sin claves.
 
@@ -222,12 +220,12 @@ GitHub las pasa solas en cada push y pull request (`.github/workflows/pruebas.ym
   de **vencimiento**; el TOTAL con IVA (no subtotal ni efectivo entregado); la **base gravada** sin IVA (0 si
   no aparece); `legible=false` si hay dudas, en lugar de inventar.
 
-- `PROMPT_INTEGRACION` (F4, asistente): conectar la app con la API de otro programa; los datos de cada gasto (`ORIGENES`) y
+- `PROMPT_INTEGRACION` (F3, asistente): conectar la app con la API de otro programa; los datos de cada gasto (`ORIGENES`) y
   los formatos (`FORMATOS`) van en la lista; elegir el endpoint que crea un gasto (o el que pida el usuario); dirección
   completa https; «lista» si acepta varios gastos, si no «uno_por_gasto»; destinos con el nombre exacto, anidados con puntos;
   obligatorios sin dato → «fijo» y explicarlo en notas; detectar la clave sin escribirla nunca; notas de usted, breves; no inventar.
 
-- `PROMPT_CONVERSACION` (F5): responder solo con los datos del cuadre (van debajo, en CSV); para totales y
+- `PROMPT_CONVERSACION` (F4): responder solo con los datos del cuadre (van debajo, en CSV); para totales y
   recuentos usar **siempre** la herramienta `sumar_gastos`; un reembolso agrupado es un solo pago; si no está en
   los datos, decirlo; sin consejos fiscales; de usted, breve, importes con coma y «€».
 
@@ -281,4 +279,4 @@ Las mismas que `requirements.txt`. Si se añade, quita o cambia un paquete, se a
 | `openpyxl` | Leer el extracto Excel y escribir el Excel descargable |
 | `pillow` | Reducir las fotos a 1600 px antes de enviarlas a la IA |
 
-Los envíos de F4 no añaden paquetes: Google Drive se guarda desde el navegador con Google Identity Services (un script de `accounts.google.com` que carga el propio navegador) y la integración propia usa la biblioteca estándar (`urllib`).
+Los envíos de F3 no añaden paquetes: Google Drive se guarda desde el navegador con Google Identity Services (un script de `accounts.google.com` que carga el propio navegador) y la integración propia usa la biblioteca estándar (`urllib`).

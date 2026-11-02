@@ -1,4 +1,4 @@
-"""Pruebas de integraciones.py y drive.py: qué se envía y cómo se manejan los fallos (F4).
+"""Pruebas de integraciones.py y drive.py: qué se envía y cómo se manejan los fallos (F3).
 
 Ninguna prueba sale a internet: las peticiones y la búsqueda de direcciones se sustituyen por otras falsas.
 Ejecutar:  python -m unittest discover -s tests -v

@@ -21,10 +21,9 @@ La especificación completa está en [ESPECIFICACION.md](ESPECIFICACION.md). Res
 
 | # | Funcionalidad | Entrada | Salida |
 |---|---|---|---|
-| F1 | Emparejar comprobantes con el extracto | Extracto (CSV/XLSX/PDF) + hasta 20 tickets o facturas (JPG/PNG/WEBP/HEIC/PDF), opcionales | Cada gasto con su comprobante (✅), varios comprobantes si es un reembolso (🔗) o «⚠️ Falta comprobante» |
-| F2 | Detectar lo que falta | El resultado de F1 | Gastos sin justificante + comprobantes que no están en el banco (efectivo, otra tarjeta, ilegibles) |
-| F3 | Agrupar por categoría | El resultado de F1 | Tabla y gráfico por categoría + Excel descargable |
-| F4 | Enviar a otro servicio | El cuadre abierto + su cuenta de Google o una integración propia (a mano o con el asistente que lee la especificación de la API) | Hoja de cálculo en **su** Google Drive, o los gastos enviados a la API de su programa de contabilidad con los campos que pide (o todo el cuadre a Make, Zapier, n8n…) |
+| F1 | Emparejar comprobantes con el extracto y detectar lo que falta | Extracto (CSV/XLSX/PDF) + hasta 20 tickets o facturas (JPG/PNG/WEBP/HEIC/PDF), opcionales | Cada gasto con su comprobante (✅), varios comprobantes si es un reembolso (🔗) o «⚠️ Falta comprobante», y lo que falta: gastos sin justificante + comprobantes que no están en el banco (efectivo, otra tarjeta, ilegibles) |
+| F2 | Agrupar por categoría | El resultado de F1 | Tabla y gráfico por categoría + Excel descargable |
+| F3 | Enviar a otro servicio | El cuadre abierto + su cuenta de Google o una integración propia (a mano o con el asistente que lee la especificación de la API) | Hoja de cálculo en **su** Google Drive, o los gastos enviados a la API de su programa de contabilidad con los campos que pide (o todo el cuadre a Make, Zapier, n8n…) |
 
 **Criterios de aceptación (selección, con casos límite):**
 

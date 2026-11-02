@@ -1,4 +1,4 @@
-"""Guardar el cuadre en la Google Drive del usuario, con OAuth en el navegador (F4).
+"""Guardar el cuadre en la Google Drive del usuario, con OAuth en el navegador (F3).
 
 Es un componente (`st.components.v2`) con un poco de JavaScript que usa Google Identity Services:
 1. Al pulsar el botón, Google abre una ventana para que el usuario entre con SU cuenta y dé permiso.

@@ -123,7 +123,7 @@ class ModeloQueConsulta(FunctionModel):
 
 
 class Conversacion(unittest.TestCase):
-    """F5: preguntar sobre lo extraído. Los totales los calcula Python, no la IA."""
+    """F4: preguntar sobre lo extraído. Los totales los calcula Python, no la IA."""
 
     def setUp(self):
         self.gastos, _, self.sueltos = app.cuadrar(datos_ejemplo.MOVIMIENTOS, datos_ejemplo.COMPROBANTES)

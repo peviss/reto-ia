@@ -1,4 +1,4 @@
-"""Pruebas de integraciones.py y drive.py: qué se envía y cómo se manejan los fallos (F3).
+"""Pruebas de integraciones.py: qué se envía y cómo se manejan los fallos (F3).
 
 Ninguna prueba sale a internet: las peticiones y la búsqueda de direcciones se sustituyen por otras falsas.
 Ejecutar:  python -m unittest discover -s tests -v
@@ -13,7 +13,6 @@ import unittest
 import urllib.error
 from unittest import mock
 
-import drive
 import integraciones
 from cuadre import cuadrar
 from datos_ejemplo import COMPROBANTES, MOVIMIENTOS
@@ -261,23 +260,6 @@ class DescargarEspecificacion(ConRedFalsa):
         with self.assertRaisesRegex(integraciones.ErrorIntegracion, "no es pública"):
             integraciones.descargar_especificacion("https://intranet/openapi.json")
         self.assertFalse(red.peticiones)
-
-
-class GoogleDrive(unittest.TestCase):
-    """Drive se guarda desde el navegador (drive.py): aquí solo se prueba la parte de Python."""
-
-    def test_sale_solo_con_client_id(self):
-        with mock.patch.object(drive.st, "secrets", {"google_drive": {"client_id": "id.apps.googleusercontent.com"}}):
-            self.assertEqual(drive.client_id(), "id.apps.googleusercontent.com")
-        for secretos in ({}, {"google_drive": {"client_id": ""}}, {"google_drive": {}}):
-            with self.subTest(secretos=secretos), mock.patch.object(drive.st, "secrets", secretos):
-                self.assertIsNone(drive.client_id())
-
-    def test_sin_secretos_de_servidor(self):
-        # El flujo OAuth es del navegador: el JavaScript no lleva client_secret ni refresh_token
-        self.assertNotIn("client_secret", drive.JS)
-        self.assertNotIn("refresh_token", drive.JS)
-        self.assertIn("drive.file", drive.JS)  # el permiso más pequeño: solo los archivos que crea la app
 
 
 if __name__ == "__main__":

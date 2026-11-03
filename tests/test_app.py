@@ -478,8 +478,6 @@ class Interfaz(unittest.TestCase):
 
     def test_CA30_sin_integraciones_se_puede_configurar_una(self):
         self.abrir_octubre()
-        # Sin secretos de Google Drive solo sale la integración propia
-        self.assertEqual(self.at.radio(key="destino").options, ["Integración propia"])
         self.at.button(key="nueva_integracion").click().run()
         self.assertFalse(self.at.exception)
         self.assertTrue(self.at.session_state["form_integracion"]["id"] == "")  # el diálogo, con una nueva
@@ -502,21 +500,6 @@ class Interfaz(unittest.TestCase):
             enviar.side_effect = app.integraciones.ErrorIntegracion("Contabilidad ha rechazado los datos (error 422).")
             self.at.button(key="enviar").click().run()
             self.assertIn("error 422", self.at.error[0].value)
-
-    def test_CA29_google_drive_con_la_cuenta_del_usuario(self):
-        cuadre = {"id": "c1", "nombre": "Octubre", "extracto": "extracto_octubre.csv", "fecha": "31/10/26, 10:00",
-                  "actualizado": 1, "movimientos": datos_ejemplo.MOVIMIENTOS, "leidos": datos_ejemplo.COMPROBANTES}
-        self.at.session_state["guardado"] = {"lecturas": {}, "cuadres": {"c1": cuadre}}
-        self.at.session_state["guardado_cargado"] = True
-        with mock.patch.object(app.drive, "client_id", return_value="id.apps.googleusercontent.com"):
-            self.at.run()
-            self.boton("Octubre").click().run()
-            self.assertEqual(self.at.radio(key="destino").options, ["Google Drive", "Integración propia"])
-            # Con Google Drive no hay botón del servidor: lo sube el navegador del usuario (drive.py)
-            self.at.radio(key="destino").set_value("Google Drive").run()
-            self.assertFalse(self.at.exception)
-            self.assertFalse([b for b in self.at.button if b.key == "enviar"])
-
 
     def test_arranca_sin_errores(self):
         self.assertFalse(self.at.exception)

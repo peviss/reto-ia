@@ -37,7 +37,6 @@ from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.google import GoogleProvider
 
 import almacen
-import drive
 import estilo
 import integraciones
 from cuadre import CATEGORIAS, PAISES, POR_CONFIRMAR, clave_pareja, consultar_gastos, cuadrar
@@ -614,10 +613,6 @@ def a_excel(gastos, resumen, sueltos):
 
 # ---------- Enviar a un servicio externo (F3, integraciones.py) ----------
 
-DESTINO_DRIVE = "Google Drive"
-DESTINO_PROPIO = "Integración propia"
-
-
 CAMPOS_FORMULARIO = ("nombre", "url", "metodo", "autenticacion", "cabecera_clave", "envio", "campo_lista")
 
 
@@ -759,22 +754,11 @@ def editar_integracion(filas):
 
 
 def enviar_cuadre(activo, gastos, resumen, sueltos, excel):
-    """El panel «📤»: guarda el cuadre abierto en la Google Drive del usuario o lo manda a una integración propia.
+    """El panel «📤»: manda el cuadre abierto a una integración propia.
 
-    Google Drive solo sale si está su client_id en los secretos: el usuario entra con su cuenta de Google
-    y el navegador sube el Excel a su Drive (drive.py). Las integraciones propias las envía el servidor,
-    con los campos que se hayan configurado (a mano o con el asistente). Solo se envía al pulsar el botón.
+    Las integraciones las envía el servidor, con los campos que se hayan configurado
+    (a mano o con el asistente). Solo se envía al pulsar el botón.
     """
-    id_cliente = drive.client_id()
-    destinos = ([DESTINO_DRIVE] if id_cliente else []) + [DESTINO_PROPIO]
-    destino = st.radio("Enviar a", destinos, key="destino", horizontal=True)
-    if destino == DESTINO_DRIVE:
-        st.caption("Se abre una ventana de Google para que entre con su cuenta. La app solo puede ver los "
-                   "archivos que guarda ella, en la carpeta «Cuadra tus gastos» de su Drive.")
-        drive.boton_guardar(id_cliente, f"Cuadre · {activo['nombre']}", excel, integraciones.MIME_EXCEL,
-                            key="drive")
-        return
-
     guardadas = {i["id"]: i for i in almacen.integraciones()}
     if not guardadas:
         st.caption("Configure a dónde se envía: su programa de contabilidad, Make, Zapier, n8n… "
@@ -1075,8 +1059,7 @@ def ayuda():
         "**solo en este navegador** (no en nuestro servidor). Si el ordenador es compartido, elimine sus cuadres al terminar. "
         "En la barra lateral, **Mis cuadres**, puede abrir uno, añadirle más tickets o empezar uno nuevo. "
         "Los archivos ya leídos no se vuelven a mandar a la IA. Puede borrarlo todo en ⚙️ Ajustes.\n\n"
-        "📤 **Enviar:** con el cuadre abierto, puede guardarlo en su Google Drive (entrando con su cuenta de Google) "
-        "o mandarlo al servicio que usted elija (su programa de contabilidad, por ejemplo). Solo se envía cuando pulsa el botón."
+        "📤 **Enviar:** con el cuadre abierto, puede mandarlo al servicio que usted elija (su programa de contabilidad, por ejemplo). Solo se envía cuando pulsa el botón."
     )
 
 
@@ -1292,7 +1275,7 @@ if activo:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         help="Para enviarlo a su gestoría: por categoría, todos los gastos y los comprobantes sueltos.",
     )
-    with zona_enviar, st.popover("📤", help="Enviar el cuadre a Google Drive o a otro servicio"):
+    with zona_enviar, st.popover("📤", help="Enviar el cuadre a otro servicio"):
         enviar_cuadre(activo, gastos, resumen, sueltos, excel)
     # Qué modelo ha leído los archivos: un aviso que se va solo, una vez, justo después de cuadrar
     if st.session_state.get("ultima_lectura"):

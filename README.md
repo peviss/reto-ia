@@ -23,7 +23,7 @@ La especificación completa está en [ESPECIFICACION.md](ESPECIFICACION.md). Res
 |---|---|---|---|
 | F1 | Emparejar comprobantes con el extracto y detectar lo que falta | Extracto (CSV/XLSX/PDF) + hasta 20 tickets o facturas (JPG/PNG/WEBP/HEIC/PDF), opcionales | Cada gasto con su comprobante (✅), varios comprobantes si es un reembolso (🔗) o «⚠️ Falta comprobante», y lo que falta: gastos sin justificante + comprobantes que no están en el banco (efectivo, otra tarjeta, ilegibles) |
 | F2 | Agrupar por categoría | El resultado de F1 | Tabla y gráfico por categoría + Excel descargable |
-| F3 | Enviar a otro servicio | El cuadre abierto + su cuenta de Google o una integración propia (a mano o con el asistente que lee la especificación de la API) | Hoja de cálculo en **su** Google Drive, o los gastos enviados a la API de su programa de contabilidad con los campos que pide (o todo el cuadre a Make, Zapier, n8n…) |
+| F3 | Enviar a otro servicio | El cuadre abierto + una integración propia (a mano o con el asistente que lee la especificación de la API) | Los gastos enviados a la API de su programa de contabilidad con los campos que pide (o todo el cuadre a Make, Zapier, n8n…) |
 
 **Criterios de aceptación (selección, con casos límite):**
 
@@ -61,7 +61,7 @@ La especificación completa está en [ESPECIFICACION.md](ESPECIFICACION.md). Res
 | Interfaz | Streamlit (una página) con tema propio claro/oscuro (`.streamlit/config.toml`) y estilos en `estilo.py`: cabecera, tarjetas, pestañas en píldora y lo secundario detrás de botones |
 | Lectura (IA) | Pydantic AI: Gemini `gemini-3.8-flash` y, si falla, Claude `claude-haiku-5-5` de reserva (`FallbackModel`); multimodal, salida con esquema; 5 comprobantes por llamada |
 | Cuadre (Python) | `cuadre.py`: (1) uno a uno: mismo importe (±1 céntimo) y fecha de emisión o de vencimiento a ≤ 4 días; si no es seguro pero el nombre (del comercio o del archivo) coincide, se empareja «por confirmar» y el usuario lo confirma o descarta; (2) reembolsos: varios tickets anteriores que suman exactamente un pago (p. ej. una transferencia a quien adelantó las compras) |
-| Integraciones | Botón **📤**: guardar el cuadre en **la Google Drive del usuario** con OAuth en su navegador (`drive.py`: entra con su cuenta, permiso `drive.file`, el token no pasa por el servidor; solo `client_id` en los secretos) o mandarlo a la API de otro programa (`integraciones.py`, solo biblioteca estándar) con los **campos** que pida: se escriben a mano o los propone un **asistente con IA** que lee la especificación de la API (OpenAPI o documentación) |
+| Integraciones | Botón **📤**: mandar el cuadre a la API de otro programa (`integraciones.py`, solo biblioteca estándar) con los **campos** que pida: se escriben a mano o los propone un **asistente con IA** que lee la especificación de la API (OpenAPI o documentación) |
 | Errores | Mensajes claros para cuota agotada (con reintento), clave, archivos dañados, demasiado grandes o ilegibles |
 | Clave | En *Settings → Secrets* de Streamlit, nunca en el código |
 

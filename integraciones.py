@@ -8,7 +8,6 @@ Python puro (sin Streamlit ni IA) y solo con la biblioteca estándar, para poder
   (cada campo: su nombre en la API, de dónde sale el valor y en qué formato). La puede escribir el
   usuario a mano o proponerla la IA leyendo la especificación de la API (app.py), pero envía Python.
 
-Google Drive no va aquí: se guarda desde el navegador del usuario, con su cuenta de Google (drive.py).
 Para añadir otro destino: una función `enviar_a_…` que lance `ErrorIntegracion` con un mensaje claro si falla.
 """
 

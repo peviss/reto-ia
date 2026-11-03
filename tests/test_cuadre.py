@@ -106,7 +106,7 @@ class CriteriosDeAceptacion(unittest.TestCase):
 
 
 class Conversacion(unittest.TestCase):
-    """consultar_gastos: lo que suma Python cuando se pregunta en la conversación (F5)."""
+    """consultar_gastos: lo que suma Python cuando se pregunta en la conversación (F4)."""
 
     def setUp(self):
         self.gastos, self.resumen, _ = cuadrar_ejemplo()

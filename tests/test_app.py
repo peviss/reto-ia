@@ -123,7 +123,7 @@ class ModeloQueConsulta(FunctionModel):
 
 
 class Conversacion(unittest.TestCase):
-    """F5: preguntar sobre lo extraído. Los totales los calcula Python, no la IA."""
+    """F4: preguntar sobre lo extraído. Los totales los calcula Python, no la IA."""
 
     def setUp(self):
         self.gastos, _, self.sueltos = app.cuadrar(datos_ejemplo.MOVIMIENTOS, datos_ejemplo.COMPROBANTES)
@@ -291,10 +291,21 @@ class LoGuardadoEnElNavegador(unittest.TestCase):
             app.leer_comprobantes_con_memoria(None, [archivo("t.jpg")], mock.Mock())
         self.assertNotIn("orden_nueva", self.estado)
 
+    def test_CA30_integraciones_sin_la_clave(self):
+        almacen.guardar_integracion({"id": "i1", "nombre": "Contabilidad", "clave": "secreta"})
+        self.assertEqual(almacen.integracion("i1"), {"id": "i1", "nombre": "Contabilidad"})
+        self.assertNotIn("clave", str(self.estado["orden_nueva"]["integraciones"]))
+        # Guardar y eliminar en la misma ejecución: una sola orden que la quita
+        almacen.eliminar_integracion("i1")
+        self.assertEqual(almacen.integraciones(), [])
+        self.assertEqual(self.estado["orden_nueva"]["integraciones"], {})
+        self.assertEqual(self.estado["orden_nueva"]["quitar_integraciones"], ["i1"])
+
     def test_borrar_todo(self):
         almacen.guardar_lecturas({"x": [1]})
         almacen.borrar_todo()
-        self.assertEqual(self.estado["guardado"], {"lecturas": {}, "cuadres": {}, "conversaciones": {}})
+        self.assertEqual(self.estado["guardado"],
+                         {"lecturas": {}, "cuadres": {}, "conversaciones": {}, "integraciones": {}})
         self.assertEqual(self.estado["orden_nueva"], {**almacen._orden_vacia(), "borrar": True})
 
     def test_CA22_archivos_en_base64_y_sin_huerfanos(self):
@@ -456,6 +467,57 @@ class Interfaz(unittest.TestCase):
         self.assertFalse(self.at.exception)
         self.assertEqual([m.markdown[0].value for m in self.at.chat_message], ["¿Cuánto en restauración?", "25,60 €"])
 
+    def abrir_octubre(self, integraciones_guardadas=None):
+        cuadre = {"id": "c1", "nombre": "Octubre", "extracto": "extracto_octubre.csv", "fecha": "31/10/26, 10:00",
+                  "actualizado": 1, "movimientos": datos_ejemplo.MOVIMIENTOS, "leidos": datos_ejemplo.COMPROBANTES}
+        self.at.session_state["guardado"] = {"lecturas": {}, "cuadres": {"c1": cuadre},
+                                             "integraciones": integraciones_guardadas or {}}
+        self.at.session_state["guardado_cargado"] = True
+        self.at.run()
+        self.boton("Octubre").click().run()
+
+    def test_CA30_sin_integraciones_se_puede_configurar_una(self):
+        self.abrir_octubre()
+        # Sin secretos de Google Drive solo sale la integración propia
+        self.assertEqual(self.at.radio(key="destino").options, ["Integración propia"])
+        self.at.button(key="nueva_integracion").click().run()
+        self.assertFalse(self.at.exception)
+        self.assertTrue(self.at.session_state["form_integracion"]["id"] == "")  # el diálogo, con una nueva
+
+    def test_CA30_enviar_con_una_integracion_guardada(self):
+        config = {**app.integraciones.configuracion_nueva(), "id": "i1", "nombre": "Contabilidad",
+                  "url": "https://api.ejemplo.com/gastos", "autenticacion": "cabecera", "cabecera_clave": "X-API-Key",
+                  "envio": "uno_por_gasto", "campos": [{"destino": "amount", "origen": "importe",
+                                                        "formato": "centimos", "valor": ""}]}
+        self.abrir_octubre({"i1": config})
+        self.assertEqual(self.at.selectbox(key="integracion_elegida").value, "i1")
+        with mock.patch.object(app.integraciones, "enviar", return_value=12) as enviar:
+            self.at.text_input(key="clave_i1").set_value("secreta")
+            self.at.button(key="enviar").click().run()
+            self.assertFalse(self.at.exception)
+            enviada, clave, filas, datos = enviar.call_args.args
+            self.assertEqual((enviada["nombre"], clave, len(filas), datos["cuadre"]), ("Contabilidad", "secreta", 12, "Octubre"))
+            self.assertIn("12 gastos", self.at.success[0].value)
+            # Si falla, el mensaje claro de integraciones.py, sin trazas
+            enviar.side_effect = app.integraciones.ErrorIntegracion("Contabilidad ha rechazado los datos (error 422).")
+            self.at.button(key="enviar").click().run()
+            self.assertIn("error 422", self.at.error[0].value)
+
+    def test_CA29_google_drive_con_la_cuenta_del_usuario(self):
+        cuadre = {"id": "c1", "nombre": "Octubre", "extracto": "extracto_octubre.csv", "fecha": "31/10/26, 10:00",
+                  "actualizado": 1, "movimientos": datos_ejemplo.MOVIMIENTOS, "leidos": datos_ejemplo.COMPROBANTES}
+        self.at.session_state["guardado"] = {"lecturas": {}, "cuadres": {"c1": cuadre}}
+        self.at.session_state["guardado_cargado"] = True
+        with mock.patch.object(app.drive, "client_id", return_value="id.apps.googleusercontent.com"):
+            self.at.run()
+            self.boton("Octubre").click().run()
+            self.assertEqual(self.at.radio(key="destino").options, ["Google Drive", "Integración propia"])
+            # Con Google Drive no hay botón del servidor: lo sube el navegador del usuario (drive.py)
+            self.at.radio(key="destino").set_value("Google Drive").run()
+            self.assertFalse(self.at.exception)
+            self.assertFalse([b for b in self.at.button if b.key == "enviar"])
+
+
     def test_arranca_sin_errores(self):
         self.assertFalse(self.at.exception)
         self.assertEqual(self.at.title[0].value, "🧾 Cuadra tus gastos")
@@ -470,6 +532,65 @@ class Interfaz(unittest.TestCase):
         self.boton("Cuadrar gastos").click().run()
         self.assertFalse(self.at.exception)
         self.assertIn("falta la clave", self.at.error[0].value)
+
+
+class ModeloQueProponeIntegracion(FunctionModel):
+    """Imita al asistente: devuelve una configuración y guarda lo que ha recibido."""
+
+    PROPUESTA = {"nombre": "Contabilidad", "url": "https://api.ejemplo.com/v1/gastos", "metodo": "POST",
+                 "autenticacion": "bearer", "envio": "uno_por_gasto",
+                 "campos": [{"destino": "date", "origen": "fecha", "formato": "fecha_dma"},
+                            {"destino": "amount", "origen": "importe", "formato": "negativo"},
+                            {"destino": "account", "origen": "fijo", "valor": "629"}],
+                 "notas": "He elegido POST /v1/gastos. Revise la cuenta contable."}
+
+    def __init__(self):
+        self.recibido = []
+        super().__init__(self.responder)
+
+    def responder(self, mensajes, info):
+        self.recibido = [p.content for m in mensajes for p in m.parts if p.part_kind == "user-prompt"]
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {"response": [self.PROPUESTA]})])
+
+
+class AsistenteDeIntegraciones(unittest.TestCase):
+    """CA31: la IA lee la especificación de una API y propone la configuración (no envía nada)."""
+
+    def setUp(self):
+        parche = mock.patch.object(app.st, "session_state", {})
+        parche.start()
+        self.addCleanup(parche.stop)
+
+    def test_CA31_propone_los_campos(self):
+        modelo = ModeloQueProponeIntegracion()
+        config, error = app.leer_especificacion(modelo, "openapi: 3.0.0\npaths: {/v1/gastos: {post: {}}}",
+                                                "un gasto por movimiento")
+        self.assertIsNone(error)
+        self.assertEqual(config["url"], "https://api.ejemplo.com/v1/gastos")
+        self.assertEqual(config["campos"][2], {"destino": "account", "origen": "fijo", "formato": "tal_cual", "valor": "629"})
+        self.assertEqual(config["cabecera_clave"], "")  # lo que no dice la IA, con su valor por defecto
+        self.assertIsNone(app.integraciones.validar_configuracion(config))
+        texto = " ".join(map(str, modelo.recibido[0]))
+        self.assertIn("un gasto por movimiento", texto)
+        self.assertIn("/v1/gastos", texto)
+
+    def test_CA31_la_propuesta_se_puede_enviar(self):
+        config, _ = app.leer_especificacion(ModeloQueProponeIntegracion(), "openapi: 3.0.0")
+        gastos, _, _ = app.cuadrar(datos_ejemplo.MOVIMIENTOS, datos_ejemplo.COMPROBANTES)
+        filas = app.integraciones.filas_para_enviar(gastos, datos_ejemplo.COMPROBANTES, "Octubre")
+        primero = app.integraciones.cuerpos(config, filas, {})[0]
+        self.assertEqual(primero, {"date": "01/10/2026", "amount": -230.0, "account": "629"})
+
+    def test_especificacion_enorme_se_recorta(self):
+        modelo = ModeloQueProponeIntegracion()
+        app.leer_especificacion(modelo, "x" * (app.MAX_CARACTERES_ESPECIFICACION + 1000))
+        self.assertIn("[… recortada]", modelo.recibido[0][-1])
+        self.assertLess(len(modelo.recibido[0][-1]), app.MAX_CARACTERES_ESPECIFICACION + 100)
+
+    def test_si_falla_la_ia_mensaje_claro(self):
+        config, error = app.leer_especificacion(ModeloFalso(error_api(401), error_api(401)), "openapi: 3.0.0")
+        self.assertIsNone(config)
+        self.assertIn("clave no válida", error)
 
 
 if __name__ == "__main__":

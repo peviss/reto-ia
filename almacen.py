@@ -7,6 +7,7 @@ los archivos de los comprobantes y las conversaciones sobre cada cuadre.
 - Las fotos (reducidas) y los PDF de los comprobantes se guardan para verlos al abrir un cuadre.
 - Las preguntas y respuestas de la pestaña «Pregunte» se guardan aparte, con el id de su cuadre,
   para que preguntar no cambie la fecha ni el orden del cuadre en el historial.
+- Las integraciones propias (a qué servicio y con qué campos se envía un cuadre), sin su clave.
 
 Todo se queda en el navegador de quien usa la app: no pasa por ningún servidor nuestro.
 
@@ -46,11 +47,12 @@ function pedir(peticion) {
 }
 
 function abrir() {
-    const peticion = indexedDB.open(BD, 3);
+    const peticion = indexedDB.open(BD, 4);
     peticion.onupgradeneeded = () => {
         const bd = peticion.result;
-        // lecturas y archivos: clave = huella del archivo; cuadres y conversaciones: clave = id del cuadre
-        for (const almacen of ["lecturas", "cuadres", "archivos", "conversaciones"]) {
+        // lecturas y archivos: clave = huella del archivo; cuadres y conversaciones: clave = id del cuadre;
+        // integraciones: clave = id de la integración
+        for (const almacen of ["lecturas", "cuadres", "archivos", "conversaciones", "integraciones"]) {
             if (!bd.objectStoreNames.contains(almacen)) bd.createObjectStore(almacen);
         }
     };
@@ -66,16 +68,19 @@ function aBlob(archivo) {
 }
 
 async function ejecutar(bd, orden) {
-    const tx = bd.transaction(["lecturas", "cuadres", "archivos", "conversaciones"], "readwrite");
+    const tx = bd.transaction(["lecturas", "cuadres", "archivos", "conversaciones", "integraciones"], "readwrite");
     const fin = new Promise((ok, mal) => { tx.oncomplete = ok; tx.onerror = tx.onabort = () => mal(tx.error); });
     const lecturas = tx.objectStore("lecturas"), cuadres = tx.objectStore("cuadres"), archivos = tx.objectStore("archivos");
-    const conversaciones = tx.objectStore("conversaciones");
+    const conversaciones = tx.objectStore("conversaciones"), integraciones = tx.objectStore("integraciones");
     if (orden.borrar) {
         lecturas.clear();
         cuadres.clear();
         archivos.clear();
         conversaciones.clear();
+        integraciones.clear();
     }
+    for (const id of orden.quitar_integraciones || []) integraciones.delete(id);
+    for (const [id, integracion] of Object.entries(orden.integraciones || {})) integraciones.put(integracion, id);
     for (const id of orden.quitar || []) {  // un cuadre eliminado se lleva su conversación
         cuadres.delete(id);
         conversaciones.delete(id);
@@ -106,10 +111,10 @@ async function todo(tx, almacen) {
 
 // Los archivos no se mandan: se quedan en el navegador
 async function leerTodo(bd) {
-    const tx = bd.transaction(["lecturas", "cuadres", "conversaciones"]);
-    const [lecturas, cuadres, conversaciones] = await Promise.all(
-        [todo(tx, "lecturas"), todo(tx, "cuadres"), todo(tx, "conversaciones")]);
-    return { lecturas, cuadres, conversaciones };
+    const tx = bd.transaction(["lecturas", "cuadres", "conversaciones", "integraciones"]);
+    const [lecturas, cuadres, conversaciones, integraciones] = await Promise.all(
+        [todo(tx, "lecturas"), todo(tx, "cuadres"), todo(tx, "conversaciones"), todo(tx, "integraciones")]);
+    return { lecturas, cuadres, conversaciones, integraciones };
 }
 
 export default function ({ data, setStateValue, setTriggerValue }) {
@@ -200,8 +205,9 @@ def huella(tipo, archivo):
 def _guardado():
     """La copia de esta sesión de lo guardado en el navegador."""
     if "guardado" not in st.session_state:
-        st.session_state["guardado"] = {"lecturas": {}, "cuadres": {}, "conversaciones": {}}
+        st.session_state["guardado"] = {"lecturas": {}, "cuadres": {}, "conversaciones": {}, "integraciones": {}}
     st.session_state["guardado"].setdefault("conversaciones", {})
+    st.session_state["guardado"].setdefault("integraciones", {})
     return st.session_state["guardado"]
 
 
@@ -228,6 +234,15 @@ def conversacion(id_cuadre):
     return list(_guardado()["conversaciones"].get(id_cuadre, [])) if id_cuadre else []
 
 
+def integraciones():
+    """Las integraciones propias guardadas, por orden alfabético."""
+    return sorted(_guardado()["integraciones"].values(), key=lambda i: i["nombre"].lower())
+
+
+def integracion(id_integracion):
+    return _guardado()["integraciones"].get(id_integracion) if id_integracion else None
+
+
 def nuevo_id():
     return uuid.uuid4().hex
 
@@ -235,8 +250,8 @@ def nuevo_id():
 # ---------- Órdenes para el navegador ----------
 
 def _orden_vacia():
-    return {"lecturas": {}, "cuadres": {}, "archivos": {}, "conversaciones": {},
-            "quitar": [], "quitar_archivos": [], "borrar": False}
+    return {"lecturas": {}, "cuadres": {}, "archivos": {}, "conversaciones": {}, "integraciones": {},
+            "quitar": [], "quitar_archivos": [], "quitar_integraciones": [], "borrar": False}
 
 
 def _juntar(antes, despues):
@@ -257,6 +272,10 @@ def _juntar(antes, despues):
     junta["quitar"] = [i for i in antes["quitar"] + despues["quitar"] if i not in despues["cuadres"]]
     junta["quitar_archivos"] = [h for h in antes["quitar_archivos"] + despues["quitar_archivos"]
                                 if h not in despues["archivos"]]
+    junta["integraciones"] = {i: c for i, c in antes["integraciones"].items() if i not in despues["quitar_integraciones"]}
+    junta["integraciones"].update(despues["integraciones"])
+    junta["quitar_integraciones"] = [i for i in antes["quitar_integraciones"] + despues["quitar_integraciones"]
+                                     if i not in despues["integraciones"]]
     return junta
 
 
@@ -313,6 +332,18 @@ def guardar_conversacion(id_cuadre, turnos):
         _guardado()["conversaciones"].pop(id_cuadre, None)
 
 
+def guardar_integracion(config):
+    """Crea o actualiza una integración propia (lleva su «id»). La clave de la API no se guarda nunca."""
+    config = {k: v for k, v in config.items() if k != "clave"}
+    _ordenar(integraciones={config["id"]: config})
+    _guardado()["integraciones"][config["id"]] = config
+
+
+def eliminar_integracion(id_integracion):
+    _ordenar(quitar_integraciones=[id_integracion])
+    _guardado()["integraciones"].pop(id_integracion, None)
+
+
 def eliminar_cuadre(id_cuadre):
     sobran = set((cuadre(id_cuadre) or {}).get("huellas", {}).values()) - _en_uso(id_cuadre)
     _ordenar(quitar=[id_cuadre], quitar_archivos=sorted(sobran))
@@ -322,7 +353,7 @@ def eliminar_cuadre(id_cuadre):
 
 def borrar_todo():
     _ordenar(borrar=True)
-    st.session_state["guardado"] = {"lecturas": {}, "cuadres": {}, "conversaciones": {}}
+    st.session_state["guardado"] = {"lecturas": {}, "cuadres": {}, "conversaciones": {}, "integraciones": {}}
 
 
 def ver_archivo(clave, nombre):
@@ -347,6 +378,7 @@ def _al_cargar():
         "lecturas": {**(recibido.get("lecturas") or {}), **local["lecturas"]},
         "cuadres": {**cuadres_recibidos, **local["cuadres"]},
         "conversaciones": {**(recibido.get("conversaciones") or {}), **local["conversaciones"]},
+        "integraciones": {**(recibido.get("integraciones") or {}), **local["integraciones"]},
     }
     st.session_state["guardado_cargado"] = True
     log.info("Guardado en el navegador: %d lecturas y %d cuadres",
